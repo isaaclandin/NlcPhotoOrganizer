@@ -21,6 +21,8 @@ import {
   AlertTriangle,
   Loader2,
   ImageOff,
+  FolderSearch,
+  X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import PhotoGrid from "./PhotoGrid";
@@ -66,6 +68,11 @@ interface PhotoBrowserViewProps {
   thumbnailWarning: string | null;
   loading: boolean;
   error: DropboxLoadError | null;
+  /** True when the currently open folder is Dropbox root — changes the empty-state copy. */
+  isRoot: boolean;
+  /** Non-blocking notice shown once if the saved startup folder couldn't be opened. */
+  startupWarning: string | null;
+  onDismissStartupWarning: () => void;
   selectedIds: Set<string>;
   onTogglePhoto: (id: string) => void;
   onToggleSelectAll: () => void;
@@ -84,6 +91,9 @@ export default function PhotoBrowserView({
   thumbnailWarning,
   loading,
   error,
+  isRoot,
+  startupWarning,
+  onDismissStartupWarning,
   selectedIds,
   onTogglePhoto,
   onToggleSelectAll,
@@ -192,6 +202,21 @@ export default function PhotoBrowserView({
         </div>
       </div>
 
+      {startupWarning && (
+        <div className="mx-6 mt-4 flex items-center gap-2 rounded-xl border border-gold-400/50 bg-gold-300/20 px-3.5 py-2.5 text-xs text-gold-600">
+          <AlertTriangle size={14} className="shrink-0" />
+          <span className="flex-1">{startupWarning}</span>
+          <button
+            type="button"
+            onClick={onDismissStartupWarning}
+            aria-label="Dismiss"
+            className="shrink-0 rounded-lg p-0.5 text-gold-600/70 hover:bg-gold-300/40 hover:text-gold-600"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <DropboxStatePanel icon={Loader2} spin heading="Loading folder…" />
       ) : error ? (
@@ -210,6 +235,12 @@ export default function PhotoBrowserView({
                 : undefined
           }
           onSecondary={CREDENTIAL_ERROR_KINDS.includes(error.kind) ? onGoToSettings : onGoToRoot}
+        />
+      ) : files.length === 0 && isRoot ? (
+        <DropboxStatePanel
+          icon={FolderSearch}
+          heading="Choose a photo folder"
+          message="Select a Dropbox folder from the sidebar to view and rename photos. You can set a startup folder in Settings."
         />
       ) : files.length === 0 ? (
         <DropboxStatePanel icon={ImageOff} heading="No photos in this folder" message="This folder doesn't contain any supported image files yet." />

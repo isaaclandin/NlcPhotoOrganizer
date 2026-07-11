@@ -13,22 +13,43 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Undo2,
 } from "lucide-react";
 import Card from "./Card";
 import Button from "./Button";
 import StatusBadge from "./StatusBadge";
 import type { BatchItemRecord, BatchRecord } from "../services/types";
 import { formatBatchDate } from "../utils/formatDate";
+import type { RenameProgress } from "./RenameActionBar";
 
 interface BatchDetailProps {
   batch: BatchRecord;
   items: BatchItemRecord[];
+  /** The original rename batch this undo batch reverses (only set when batch.operationType === "undo"). */
+  undoOfBatch: BatchRecord | null;
+  onRequestUndo: () => void;
+  undoing: boolean;
+  isUndoingThisBatch: boolean;
+  undoProgress: RenameProgress | null;
 }
 
-export default function BatchDetail({ batch, items }: BatchDetailProps) {
+export default function BatchDetail({
+  batch,
+  items,
+  undoOfBatch,
+  onRequestUndo,
+  undoing,
+  isUndoingThisBatch,
+  undoProgress,
+}: BatchDetailProps) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [copied, setCopied] = useState(false);
+
+  const successfulCount = items.filter((item) => item.result === "Success").length;
+  // Eligible only for a rename batch, with at least one successful item, that
+  // hasn't already been undone — undo batches themselves can never be undone.
+  const canUndo = batch.operationType === "rename" && batch.undoStatus === "none" && successfulCount > 0;
 
   const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
   const clampedPage = Math.min(page, totalPages);
@@ -61,21 +82,61 @@ export default function BatchDetail({ batch, items }: BatchDetailProps) {
   };
 
   return (
-    <Card className="flex min-h-0 flex-1 flex-col overflow-hidden" padded={false}>
+    <Card className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto" padded={false}>
       <div className="flex items-center justify-between gap-4 border-b border-beige-300/60 px-5 py-4">
         <div className="flex items-center gap-3">
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gold-300/40">
             <Folder size={20} className="text-gold-600" />
           </span>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-base font-semibold text-ink-900">{batch.name}</h2>
               <StatusBadge status={batch.status} />
+              {batch.operationType === "undo" && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-sage-300/70 bg-sage-100 px-2.5 py-1 text-xs font-semibold text-forest-700">
+                  <Undo2 size={11} />
+                  Undo batch
+                </span>
+              )}
+              {batch.operationType === "rename" && batch.undoStatus === "complete" && (
+                <span className="inline-flex items-center rounded-full border border-beige-300 bg-beige-200 px-2.5 py-1 text-xs font-semibold text-ink-600">
+                  Undone
+                </span>
+              )}
+              {batch.operationType === "rename" && batch.undoStatus === "partial" && (
+                <span className="inline-flex items-center rounded-full border border-gold-400/50 bg-gold-300/30 px-2.5 py-1 text-xs font-semibold text-gold-600">
+                  Partially undone
+                </span>
+              )}
             </div>
             <p className="text-xs text-ink-500">Completed on {formatBatchDate(batch.createdAt)}</p>
+            {batch.operationType === "undo" && (
+              <p className="text-xs text-ink-500">
+                Undo of:{" "}
+                <span className="font-medium text-ink-700">
+                  {undoOfBatch ? `${undoOfBatch.name} (${formatBatchDate(undoOfBatch.createdAt)})` : "original batch"}
+                </span>
+              </p>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {canUndo &&
+            (isUndoingThisBatch ? (
+              <span className="inline-flex items-center gap-1.5 rounded-xl border border-beige-300 bg-cream-50 px-3.5 py-2 text-xs font-medium text-ink-500">
+                Undoing {undoProgress?.done ?? 0} of {undoProgress?.total ?? successfulCount}…
+              </span>
+            ) : (
+              <Button
+                variant="secondary"
+                icon={<Undo2 size={14} />}
+                className="!px-3.5 !py-2 text-xs"
+                onClick={onRequestUndo}
+                disabled={undoing}
+              >
+                Undo Batch
+              </Button>
+            ))}
           <Button
             variant="secondary"
             icon={copied ? <Check size={14} /> : <Copy size={14} />}
@@ -151,13 +212,13 @@ export default function BatchDetail({ batch, items }: BatchDetailProps) {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col border-t border-beige-300/60 px-5 pt-4">
+      <div className="min-w-0 border-t border-beige-300/60 px-5 pb-4 pt-4">
         <p className="mb-2 text-sm font-semibold text-ink-900">
           Rename Details ({batch.fileCount} files)
         </p>
-        <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-beige-300/60">
+        <div className="overflow-x-auto rounded-xl border border-beige-300/60">
           <table className="w-full min-w-[520px] text-left text-sm">
-            <thead className="sticky top-0 bg-beige-200/80 text-xs uppercase tracking-wide text-ink-500">
+            <thead className="bg-beige-200/80 text-xs uppercase tracking-wide text-ink-500">
               <tr>
                 <th className="px-3 py-2 font-medium">Original Name</th>
                 <th className="px-3 py-2 font-medium">New Name</th>

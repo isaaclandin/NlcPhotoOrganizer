@@ -1,8 +1,7 @@
-import { Info, Trash2, Sparkles, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Trash2, Sparkles, Loader2, CheckCircle2, AlertTriangle, FilePenLine } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import Pill from "./Pill";
 import Button from "./Button";
-import DuckLogo from "./DuckLogo";
 import { buildRenamePattern, formatSequence } from "../utils/naming";
 import miniDuckPreviewReference from "../assets/design/processed/mini_duck_preview_reference.png";
 
@@ -74,9 +73,13 @@ export default function RenameActionBar({
           <div className="mb-2.5 flex items-center gap-1.5">
             <span className="text-sm font-semibold text-ink-900">Location</span>
             <span className="text-xs text-ink-400">(required)</span>
-            <Info size={13} className="text-ink-400" />
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 rounded-full border border-beige-300 bg-cream-50 p-1.5">
+          {/* flex-wrap + gap (not justify-between/fixed widths) so this stays
+              balanced for any number/length of locations — each pill sizes
+              to its own label and wraps to a new row rather than squeezing
+              or overflowing. rounded-2xl on the container (not rounded-full)
+              so it still looks intentional once it wraps past one row. */}
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-beige-300 bg-cream-50 p-2">
             {locations.map((location) => {
               const isSelected = location === selectedLocation;
               return (
@@ -84,10 +87,10 @@ export default function RenameActionBar({
                   key={location}
                   type="button"
                   onClick={() => onSelectLocation(location)}
-                  className={`rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors duration-150 ${
+                  className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition-colors duration-150 ${
                     isSelected
                       ? "bg-forest-600 text-cream-50 shadow-soft"
-                      : "text-ink-700 hover:bg-beige-200"
+                      : "text-ink-700 hover:bg-sage-100"
                   }`}
                 >
                   {location}
@@ -101,7 +104,6 @@ export default function RenameActionBar({
           <div className="mb-2.5 flex items-center gap-1.5">
             <span className="text-sm font-semibold text-ink-900">Tags</span>
             <span className="text-xs text-ink-400">(optional)</span>
-            <Info size={13} className="text-ink-400" />
           </div>
           <div className="flex flex-wrap gap-1.5">
             {tagOptions.map((tag) => (
@@ -156,9 +158,10 @@ export default function RenameActionBar({
           </Button>
           <Button
             variant="primary"
-            icon={renaming ? <Loader2 size={18} className="animate-spin" /> : <DuckLogo size={18} />}
+            icon={renaming ? <Loader2 size={18} className="animate-spin" /> : <FilePenLine size={18} />}
             onClick={onRename}
             disabled={selectedCount === 0 || !selectedLocation || renaming}
+            className="!font-semibold active:!bg-forest-800"
           >
             {renaming
               ? `Renaming ${renameProgress?.done ?? 0} of ${renameProgress?.total ?? selectedCount}…`

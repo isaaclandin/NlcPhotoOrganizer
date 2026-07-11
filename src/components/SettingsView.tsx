@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Info, Plus, Eye, EyeOff, Link2, CheckCircle2, AlertTriangle, Loader2, Leaf } from "lucide-react";
+import { Info, Plus, Eye, EyeOff, Link2, CheckCircle2, AlertTriangle, Loader2, Leaf, FolderCog } from "lucide-react";
 import Card from "./Card";
 import Button from "./Button";
 import SortableSettingsList from "./SortableSettingsList";
@@ -7,6 +7,11 @@ import type { SortableItem } from "./SortableSettingsList";
 import { locationsRepository, tagsRepository } from "../services/labelsRepository";
 import { testConnection } from "../services/dropboxService";
 import type { AppSettings, LabelItem } from "../services/types";
+
+/** "" is a valid, deliberately-chosen path (Dropbox root) — only null means "no folder selected". */
+function describeDropboxPath(path: string): string {
+  return path === "" ? "Dropbox root" : path;
+}
 
 type ConnectionState =
   | { status: "idle" }
@@ -18,6 +23,8 @@ interface SettingsViewProps {
   settings: AppSettings;
   locations: LabelItem[];
   tags: LabelItem[];
+  /** The folder currently open in the photo browser — what "Use Current Folder" would save. */
+  currentDropboxPath: string;
   onSettingsSaved: (patch: Partial<AppSettings>) => void;
   onLabelsChanged: () => void;
 }
@@ -26,6 +33,7 @@ export default function SettingsView({
   settings,
   locations,
   tags,
+  currentDropboxPath,
   onSettingsSaved,
   onLabelsChanged,
 }: SettingsViewProps) {
@@ -308,6 +316,46 @@ export default function SettingsView({
               ) : (
                 <span className="flex items-center gap-1.5 text-xs font-medium text-ink-400">Not tested yet.</span>
               )}
+            </div>
+          </Card>
+
+          <Card>
+            <div className="flex items-center gap-1.5">
+              <FolderCog size={14} className="text-sage-500" />
+              <h2 className="text-sm font-semibold text-ink-900">Startup Folder</h2>
+              <Info size={13} className="text-ink-400" />
+            </div>
+            <p className="mt-1 text-xs text-ink-500">Choose which Dropbox folder opens when the app starts.</p>
+
+            <div className="mt-3 rounded-xl border border-beige-300/70 bg-cream-50 px-3.5 py-2.5">
+              <p className="text-xs font-medium text-ink-700">Current default</p>
+              <p className="mt-0.5 truncate font-mono text-xs text-ink-900">
+                {settings.defaultStartupDropboxPath === null
+                  ? "None set."
+                  : describeDropboxPath(settings.defaultStartupDropboxPath)}
+              </p>
+            </div>
+
+            <p className="mt-3 text-xs text-ink-500">
+              Folder open right now: <span className="font-mono text-ink-700">{describeDropboxPath(currentDropboxPath)}</span>
+            </p>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                className="!px-3.5 !py-2 text-xs"
+                onClick={() => onSettingsSaved({ defaultStartupDropboxPath: currentDropboxPath })}
+              >
+                Use Current Folder
+              </Button>
+              <Button
+                variant="secondary"
+                className="!px-3.5 !py-2 text-xs"
+                onClick={() => onSettingsSaved({ defaultStartupDropboxPath: null })}
+                disabled={settings.defaultStartupDropboxPath === null}
+              >
+                Clear Default
+              </Button>
             </div>
           </Card>
         </div>

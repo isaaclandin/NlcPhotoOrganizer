@@ -11,6 +11,7 @@ interface SettingsRow {
   dropbox_app_secret: string;
   dropbox_refresh_token: string;
   last_dropbox_path: string;
+  default_startup_dropbox_path: string | null;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -22,6 +23,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   dropboxAppSecret: "",
   dropboxRefreshToken: "",
   lastDropboxPath: "",
+  defaultStartupDropboxPath: null,
 };
 
 function mapRow(row: SettingsRow): AppSettings {
@@ -34,6 +36,7 @@ function mapRow(row: SettingsRow): AppSettings {
     dropboxAppSecret: row.dropbox_app_secret,
     dropboxRefreshToken: row.dropbox_refresh_token,
     lastDropboxPath: row.last_dropbox_path ?? "",
+    defaultStartupDropboxPath: row.default_startup_dropbox_path ?? null,
   };
 }
 
@@ -42,8 +45,8 @@ export async function getSettings(): Promise<AppSettings> {
   if (rows.length === 0) {
     await execute(
       `INSERT OR IGNORE INTO settings
-         (id, base_prefix, number_width, log_retention_days, log_retention_min_batches, dropbox_app_key, dropbox_app_secret, dropbox_refresh_token, last_dropbox_path)
-       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, base_prefix, number_width, log_retention_days, log_retention_min_batches, dropbox_app_key, dropbox_app_secret, dropbox_refresh_token, last_dropbox_path, default_startup_dropbox_path)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         DEFAULT_SETTINGS.basePrefix,
         DEFAULT_SETTINGS.numberWidth,
@@ -53,6 +56,7 @@ export async function getSettings(): Promise<AppSettings> {
         DEFAULT_SETTINGS.dropboxAppSecret,
         DEFAULT_SETTINGS.dropboxRefreshToken,
         DEFAULT_SETTINGS.lastDropboxPath,
+        DEFAULT_SETTINGS.defaultStartupDropboxPath,
       ],
     );
     return { ...DEFAULT_SETTINGS };
@@ -72,7 +76,8 @@ export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSe
        dropbox_app_key = ?,
        dropbox_app_secret = ?,
        dropbox_refresh_token = ?,
-       last_dropbox_path = ?
+       last_dropbox_path = ?,
+       default_startup_dropbox_path = ?
      WHERE id = 1`,
     [
       next.basePrefix,
@@ -83,6 +88,7 @@ export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSe
       next.dropboxAppSecret,
       next.dropboxRefreshToken,
       next.lastDropboxPath,
+      next.defaultStartupDropboxPath,
     ],
   );
   return next;

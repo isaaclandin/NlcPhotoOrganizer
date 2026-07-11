@@ -1,17 +1,31 @@
 import { useEffect, useMemo, useState } from "react";
-import { Search, SlidersHorizontal, Download, Leaf } from "lucide-react";
-import Button from "./Button";
+import { Leaf, CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
 import BatchList from "./BatchList";
 import BatchDetail from "./BatchDetail";
-import { getBatchItems, listBatches } from "../services/logsRepository";
+import { getBatch, getBatchItems, listBatches } from "../services/logsRepository";
 import type { BatchItemRecord, BatchRecord } from "../services/types";
+import type { RenameProgress, RenameResult } from "./RenameActionBar";
 
-export default function LogsView() {
-  const [query, setQuery] = useState("");
+interface LogsViewProps {
+  onRequestUndo: (batch: BatchRecord, items: BatchItemRecord[]) => void;
+  undoing: boolean;
+  undoingBatchId: string | null;
+  undoProgress: RenameProgress | null;
+  undoResult: RenameResult | null;
+}
+
+export default function LogsView({
+  onRequestUndo,
+  undoing,
+  undoingBatchId,
+  undoProgress,
+  undoResult,
+}: LogsViewProps) {
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
   const [batches, setBatches] = useState<BatchRecord[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeItems, setActiveItems] = useState<BatchItemRecord[]>([]);
+  const [undoOfBatch, setUndoOfBatch] = useState<BatchRecord | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -44,54 +58,68 @@ export default function LogsView() {
     };
   }, [activeId]);
 
-  const filteredBatches = useMemo(() => {
-    let rows = batches;
-    if (query.trim()) {
-      const q = query.toLowerCase();
-      rows = rows.filter((b) => b.name.toLowerCase().includes(q));
+  useEffect(() => {
+    const activeBatch = batches.find((b) => b.id === activeId) ?? null;
+    if (!activeBatch || activeBatch.operationType !== "undo" || !activeBatch.undoOfBatchId) {
+      setUndoOfBatch(null);
+      return;
     }
-    rows = [...rows].sort((a, b) =>
+    let cancelled = false;
+    (async () => {
+      const original = await getBatch(activeBatch.undoOfBatchId!);
+      if (!cancelled) setUndoOfBatch(original);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeId, batches]);
+
+  const sortedBatches = useMemo(() => {
+    return [...batches].sort((a, b) =>
       sortOrder === "newest"
         ? b.createdAt.localeCompare(a.createdAt)
         : a.createdAt.localeCompare(b.createdAt),
     );
-    return rows;
-  }, [batches, query, sortOrder]);
+  }, [batches, sortOrder]);
 
   const activeBatch = batches.find((b) => b.id === activeId) ?? null;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col px-6 py-6">
-      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="flex items-center gap-2 font-serif text-xl font-semibold text-forest-700">
-            Batch History
-            <Leaf size={16} className="text-sage-400" />
-          </h1>
-          <p className="mt-0.5 text-sm text-ink-500">
-            Review your rename activity and download logs.
-          </p>
-        </div>
-        <div className="flex items-center gap-2.5">
-          <div className="flex items-center gap-2 rounded-xl border border-beige-300 bg-cream-50 px-3.5 py-2.5">
-            <Search size={15} className="text-ink-400" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search batches..."
-              className="w-40 bg-transparent text-sm text-ink-900 outline-none placeholder:text-ink-400"
-            />
+    <div className="flex min-h-0 flex-1 flex-col px-6 pb-6 pt-4">
+      <div className="mb-3">
+        <h1 className="flex items-center gap-2 font-serif text-xl font-semibold text-forest-700">
+          Batch History
+          <Leaf size={16} className="text-sage-400" />
+        </h1>
+        <p className="mt-0.5 text-sm text-ink-500">
+          Review your rename activity and download logs.
+        </p>
+        {undoResult && (
+          <div
+            className={`mt-2 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium ${
+              undoResult.tone === "success"
+                ? "bg-sage-100 text-forest-700"
+                : undoResult.tone === "warning"
+                  ? "bg-gold-300/40 text-gold-600"
+                  : "bg-rose-100 text-rose-700"
+            }`}
+          >
+            {undoResult.tone === "success" ? (
+              <CheckCircle2 size={13} />
+            ) : undoResult.tone === "warning" ? (
+              <AlertTriangle size={13} />
+            ) : (
+              <XCircle size={13} />
+            )}
+            {undoResult.message}
           </div>
-          <Button variant="secondary" icon={<SlidersHorizontal size={15} />} disabled>
-            Filter
-          </Button>
-          <Button variant="secondary" icon={<Download size={15} />} disabled>
-            Export Logs
-          </Button>
-        </div>
+        )}
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 lg:grid-cols-[340px_1fr]">
+      {/* grid-rows-1 forces the single row to 1fr — without it, an implicit
+          auto-sized row only grows to fit its content, so the detail panel
+          doesn't stretch to fill the remaining page height. */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-1 gap-5 lg:grid-cols-[340px_1fr]">
         <div className="flex min-h-0 flex-col">
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-semibold text-ink-900">Recent Batches</p>
@@ -107,21 +135,27 @@ export default function LogsView() {
           <div className="min-h-0 flex-1 overflow-y-auto pr-1">
             {loading ? (
               <p className="px-1 py-4 text-sm text-ink-400">Loading…</p>
-            ) : filteredBatches.length === 0 ? (
+            ) : sortedBatches.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-beige-300 bg-beige-100/60 px-4 py-6 text-center text-sm text-ink-500">
-                {batches.length === 0
-                  ? "No rename batches yet. Rename some photos to see them here."
-                  : "No batches match your search."}
+                No rename batches yet. Rename some photos to see them here.
               </div>
             ) : (
-              <BatchList batches={filteredBatches} activeId={activeId} onSelect={setActiveId} />
+              <BatchList batches={sortedBatches} activeId={activeId} onSelect={setActiveId} />
             )}
           </div>
         </div>
 
-        <div className="flex min-h-0 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-col">
           {activeBatch ? (
-            <BatchDetail batch={activeBatch} items={activeItems} />
+            <BatchDetail
+              batch={activeBatch}
+              items={activeItems}
+              undoOfBatch={undoOfBatch}
+              onRequestUndo={() => onRequestUndo(activeBatch, activeItems)}
+              undoing={undoing}
+              isUndoingThisBatch={undoing && undoingBatchId === activeBatch.id}
+              undoProgress={undoProgress}
+            />
           ) : (
             <div className="flex flex-1 items-center justify-center rounded-2xl border border-dashed border-beige-300 bg-beige-100/40 text-sm text-ink-400">
               Select a batch to see its details.

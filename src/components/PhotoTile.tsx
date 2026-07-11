@@ -9,7 +9,12 @@ interface PhotoTileProps {
   onToggle: (id: string) => void;
 }
 
+const HEIC_LIKE_EXTENSIONS = new Set(["heic", "heif"]);
+
 export default function PhotoTile({ photo, thumbnail, selected, onToggle }: PhotoTileProps) {
+  const extensionLabel = photo.extension.toLowerCase();
+  const showFormatLabel = HEIC_LIKE_EXTENSIONS.has(extensionLabel);
+
   return (
     <button
       type="button"
@@ -32,8 +37,13 @@ export default function PhotoTile({ photo, thumbnail, selected, onToggle }: Phot
       ) : (
         <>
           <div className="absolute inset-0 bg-gradient-to-br from-sage-100 via-cream-100 to-beige-200" />
-          <div className="absolute inset-0 flex items-center justify-center pb-4">
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 pb-4">
             <ImageOff size={26} strokeWidth={1.5} className="text-sage-400/70" />
+            {showFormatLabel && (
+              <span className="rounded-full bg-cream-50/80 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sage-600">
+                {extensionLabel}
+              </span>
+            )}
           </div>
           <div className="absolute inset-x-0 bottom-0 px-2.5 pb-2 pt-2">
             <p className="truncate text-[10px] font-medium text-ink-500">{photo.name}</p>

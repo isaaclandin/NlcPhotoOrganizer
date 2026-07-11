@@ -44,7 +44,10 @@ CREATE TABLE IF NOT EXISTS settings (
   dropbox_app_key TEXT NOT NULL DEFAULT '',
   dropbox_app_secret TEXT NOT NULL DEFAULT '',
   dropbox_refresh_token TEXT NOT NULL DEFAULT '',
-  last_dropbox_path TEXT NOT NULL DEFAULT ''
+  last_dropbox_path TEXT NOT NULL DEFAULT '',
+  -- NULL = not set. '' = Dropbox root, deliberately chosen. Nullable (unlike
+  -- last_dropbox_path) so an explicit root default is distinguishable from unset.
+  default_startup_dropbox_path TEXT DEFAULT NULL
 );
 
 INSERT OR IGNORE INTO settings (id, base_prefix, number_width, log_retention_days, log_retention_min_batches)
@@ -94,7 +97,12 @@ CREATE TABLE IF NOT EXISTS batches (
   location_group TEXT NOT NULL,
   tags TEXT NOT NULL,
   numbering_range TEXT NOT NULL,
-  file_count INTEGER NOT NULL
+  file_count INTEGER NOT NULL,
+  operation_type TEXT NOT NULL DEFAULT 'rename',
+  undo_of_batch_id TEXT,
+  undone_by_batch_id TEXT,
+  undo_status TEXT NOT NULL DEFAULT 'none',
+  undone_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS batch_items (
@@ -102,6 +110,8 @@ CREATE TABLE IF NOT EXISTS batch_items (
   batch_id TEXT NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
   original_name TEXT NOT NULL,
   new_name TEXT NOT NULL,
+  original_path TEXT NOT NULL DEFAULT '',
+  new_path TEXT NOT NULL DEFAULT '',
   result TEXT NOT NULL,
   error TEXT
 );
@@ -117,16 +127,48 @@ CREATE INDEX IF NOT EXISTS idx_batch_items_batch_id ON batch_items(batch_id);
  * written. Only needed by the browser fallback — Tauri's real SQLite goes
  * through versioned migrations instead.
  */
-function applyLightweightColumnMigrations(db: import("sql.js").Database): void {
+function tableColumns(db: import("sql.js").Database, table: string): Set<string> {
   const columns = new Set<string>();
-  const stmt = db.prepare("PRAGMA table_info(settings)");
+  const stmt = db.prepare(`PRAGMA table_info(${table})`);
   while (stmt.step()) {
     columns.add(stmt.getAsObject().name as string);
   }
   stmt.free();
+  return columns;
+}
 
-  if (!columns.has("last_dropbox_path")) {
+function applyLightweightColumnMigrations(db: import("sql.js").Database): void {
+  const settingsColumns = tableColumns(db, "settings");
+  if (!settingsColumns.has("last_dropbox_path")) {
     db.run("ALTER TABLE settings ADD COLUMN last_dropbox_path TEXT NOT NULL DEFAULT ''");
+  }
+  if (!settingsColumns.has("default_startup_dropbox_path")) {
+    db.run("ALTER TABLE settings ADD COLUMN default_startup_dropbox_path TEXT DEFAULT NULL");
+  }
+
+  const batchColumns = tableColumns(db, "batches");
+  if (!batchColumns.has("operation_type")) {
+    db.run("ALTER TABLE batches ADD COLUMN operation_type TEXT NOT NULL DEFAULT 'rename'");
+  }
+  if (!batchColumns.has("undo_of_batch_id")) {
+    db.run("ALTER TABLE batches ADD COLUMN undo_of_batch_id TEXT");
+  }
+  if (!batchColumns.has("undone_by_batch_id")) {
+    db.run("ALTER TABLE batches ADD COLUMN undone_by_batch_id TEXT");
+  }
+  if (!batchColumns.has("undo_status")) {
+    db.run("ALTER TABLE batches ADD COLUMN undo_status TEXT NOT NULL DEFAULT 'none'");
+  }
+  if (!batchColumns.has("undone_at")) {
+    db.run("ALTER TABLE batches ADD COLUMN undone_at TEXT");
+  }
+
+  const batchItemColumns = tableColumns(db, "batch_items");
+  if (!batchItemColumns.has("original_path")) {
+    db.run("ALTER TABLE batch_items ADD COLUMN original_path TEXT NOT NULL DEFAULT ''");
+  }
+  if (!batchItemColumns.has("new_path")) {
+    db.run("ALTER TABLE batch_items ADD COLUMN new_path TEXT NOT NULL DEFAULT ''");
   }
 }
 

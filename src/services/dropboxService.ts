@@ -254,14 +254,36 @@ export async function testConnection(): Promise<TestConnectionResult> {
 // Folder listing
 // ---------------------------------------------------------------------------
 
-const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "tiff", "tif", "gif", "webp", "bmp"]);
+const IMAGE_EXTENSIONS = new Set([
+  "jpg",
+  "jpeg",
+  "png",
+  "tiff",
+  "tif",
+  "gif",
+  "webp",
+  "bmp",
+  "heic",
+  "heif",
+]);
 
 function extensionOf(name: string): string {
   const dotIndex = name.lastIndexOf(".");
   return dotIndex >= 0 ? name.slice(dotIndex + 1).toLowerCase() : "";
 }
 
-/** jpg, jpeg, png, tiff, tif, gif, webp, bmp — may grow once thumbnails land. */
+/**
+ * Same as extensionOf but keeps the original casing, so a renamed file's
+ * extension matches what was actually on disk (e.g. "IMG_1234.HEIC" renames
+ * to "...00001.HEIC", not "...00001.heic"). Detection stays case-insensitive
+ * via extensionOf; only the text embedded in the new filename preserves case.
+ */
+export function rawExtensionOf(name: string): string {
+  const dotIndex = name.lastIndexOf(".");
+  return dotIndex >= 0 ? name.slice(dotIndex + 1) : "";
+}
+
+/** jpg, jpeg, png, tiff, tif, gif, webp, bmp, heic, heif. HEIC/HEIF thumbnails may fail to generate via Dropbox's API — that's handled per-file, not treated as unsupported. */
 export function isSupportedImageFile(name: string): boolean {
   return IMAGE_EXTENSIONS.has(extensionOf(name));
 }
@@ -295,7 +317,7 @@ function normalizeEntry(raw: RawDropboxEntry): DropboxEntry | null {
       pathLower: raw.path_lower,
       pathDisplay: raw.path_display,
       type: "file",
-      extension: extensionOf(raw.name),
+      extension: rawExtensionOf(raw.name),
       isImage: isSupportedImageFile(raw.name),
       size: raw.size,
       clientModified: raw.client_modified,

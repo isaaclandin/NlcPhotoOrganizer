@@ -8,6 +8,13 @@ export interface AppSettings {
   dropboxRefreshToken: string;
   /** Last Dropbox folder path browsed, "" = root. Restored on next launch. */
   lastDropboxPath: string;
+  /**
+   * Explicit user-chosen startup folder, set via Settings' "Use Current
+   * Folder". null = not set. "" = Dropbox root, deliberately chosen (distinct
+   * from null so a saved root preference doesn't look unset). Takes priority
+   * over lastDropboxPath on launch.
+   */
+  defaultStartupDropboxPath: string | null;
 }
 
 export interface LabelItem {
@@ -18,6 +25,9 @@ export interface LabelItem {
 
 export type BatchStatus = "Success" | "Partial" | "Failed";
 export type ItemResult = "Success" | "Failed";
+export type BatchOperationType = "rename" | "undo";
+/** none = never undone, partial = some items restored, complete = all restored. Rename batches only. */
+export type UndoStatus = "none" | "partial" | "complete";
 
 export interface BatchRecord {
   id: string;
@@ -31,6 +41,13 @@ export interface BatchRecord {
   tags: string[];
   numberingRange: string;
   fileCount: number;
+  operationType: BatchOperationType;
+  /** Set on an undo batch: the rename batch it reverses. */
+  undoOfBatchId: string | null;
+  /** Set on a rename batch once undone: the undo batch that reversed it. */
+  undoneByBatchId: string | null;
+  undoStatus: UndoStatus;
+  undoneAt: string | null;
 }
 
 export interface BatchItemRecord {
@@ -38,6 +55,10 @@ export interface BatchItemRecord {
   batchId: string;
   originalName: string;
   newName: string;
+  /** Full Dropbox path this row moved from. */
+  originalPath: string;
+  /** Full Dropbox path this row moved to. */
+  newPath: string;
   result: ItemResult;
   error: string | null;
 }
@@ -45,6 +66,8 @@ export interface BatchItemRecord {
 export interface NewBatchItem {
   originalName: string;
   newName: string;
+  originalPath: string;
+  newPath: string;
   result: ItemResult;
   error?: string | null;
 }

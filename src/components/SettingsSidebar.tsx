@@ -1,13 +1,10 @@
-import { Home, Tag, Box, ListOrdered, FileText } from "lucide-react";
+import { Home, FileText } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-export type SettingsSection = "general" | "labels" | "dropbox" | "numbering" | "logs";
+export type SettingsSection = "general" | "logs";
 
 const NAV_ITEMS: { id: SettingsSection; label: string; icon: LucideIcon }[] = [
   { id: "general", label: "General", icon: Home },
-  { id: "labels", label: "Labels", icon: Tag },
-  { id: "dropbox", label: "Dropbox", icon: Box },
-  { id: "numbering", label: "Numbering", icon: ListOrdered },
   { id: "logs", label: "Logs", icon: FileText },
 ];
 

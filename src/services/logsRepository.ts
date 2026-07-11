@@ -1,6 +1,14 @@
 import { execute, select } from "./db";
 import { getSettings } from "./settingsRepository";
-import type { BatchItemRecord, BatchRecord, BatchStatus, ItemResult, NewBatchItem } from "./types";
+import type {
+  BatchItemRecord,
+  BatchOperationType,
+  BatchRecord,
+  BatchStatus,
+  ItemResult,
+  NewBatchItem,
+  UndoStatus,
+} from "./types";
 
 interface BatchRow {
   id: string;
@@ -14,6 +22,11 @@ interface BatchRow {
   tags: string;
   numbering_range: string;
   file_count: number;
+  operation_type: BatchOperationType;
+  undo_of_batch_id: string | null;
+  undone_by_batch_id: string | null;
+  undo_status: UndoStatus;
+  undone_at: string | null;
 }
 
 interface BatchItemRow {
@@ -21,6 +34,8 @@ interface BatchItemRow {
   batch_id: string;
   original_name: string;
   new_name: string;
+  original_path: string;
+  new_path: string;
   result: ItemResult;
   error: string | null;
 }
@@ -38,6 +53,11 @@ function mapBatchRow(row: BatchRow): BatchRecord {
     tags: JSON.parse(row.tags) as string[],
     numberingRange: row.numbering_range,
     fileCount: row.file_count,
+    operationType: row.operation_type,
+    undoOfBatchId: row.undo_of_batch_id,
+    undoneByBatchId: row.undone_by_batch_id,
+    undoStatus: row.undo_status,
+    undoneAt: row.undone_at,
   };
 }
 
@@ -47,6 +67,8 @@ function mapItemRow(row: BatchItemRow): BatchItemRecord {
     batchId: row.batch_id,
     originalName: row.original_name,
     newName: row.new_name,
+    originalPath: row.original_path,
+    newPath: row.new_path,
     result: row.result,
     error: row.error,
   };
@@ -55,6 +77,11 @@ function mapItemRow(row: BatchItemRow): BatchItemRecord {
 export async function listBatches(): Promise<BatchRecord[]> {
   const rows = await select<BatchRow>("SELECT * FROM batches ORDER BY created_at DESC");
   return rows.map(mapBatchRow);
+}
+
+export async function getBatch(id: string): Promise<BatchRecord | null> {
+  const rows = await select<BatchRow>("SELECT * FROM batches WHERE id = ?", [id]);
+  return rows.length > 0 ? mapBatchRow(rows[0]) : null;
 }
 
 export async function getBatchItems(batchId: string): Promise<BatchItemRecord[]> {
@@ -71,8 +98,9 @@ export async function createBatch(
 ): Promise<BatchRecord> {
   await execute(
     `INSERT INTO batches
-       (id, name, created_at, status, folder_name, folder_path, location, location_group, tags, numbering_range, file_count)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, name, created_at, status, folder_name, folder_path, location, location_group, tags,
+        numbering_range, file_count, operation_type, undo_of_batch_id, undone_by_batch_id, undo_status, undone_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       batch.id,
       batch.name,
@@ -85,17 +113,40 @@ export async function createBatch(
       JSON.stringify(batch.tags),
       batch.numberingRange,
       batch.fileCount,
+      batch.operationType,
+      batch.undoOfBatchId,
+      batch.undoneByBatchId,
+      batch.undoStatus,
+      batch.undoneAt,
     ],
   );
 
   for (const item of items) {
     await execute(
-      `INSERT INTO batch_items (batch_id, original_name, new_name, result, error) VALUES (?, ?, ?, ?, ?)`,
-      [batch.id, item.originalName, item.newName, item.result, item.error ?? null],
+      `INSERT INTO batch_items (batch_id, original_name, new_name, original_path, new_path, result, error)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [batch.id, item.originalName, item.newName, item.originalPath, item.newPath, item.result, item.error ?? null],
     );
   }
 
   return { ...batch };
+}
+
+/**
+ * Marks a rename batch as (at least partially) undone. Only called after at
+ * least one undo item succeeds — per spec, a fully-failed undo must leave
+ * the original batch's undo_status untouched ("none"), so callers simply
+ * don't call this at all in that case rather than passing a third status.
+ */
+export async function markBatchUndone(
+  batchId: string,
+  undoBatchId: string,
+  status: Exclude<UndoStatus, "none">,
+): Promise<void> {
+  await execute(
+    `UPDATE batches SET undone_at = ?, undone_by_batch_id = ?, undo_status = ? WHERE id = ?`,
+    [new Date().toISOString(), undoBatchId, status, batchId],
+  );
 }
 
 export async function deleteAllBatches(): Promise<void> {

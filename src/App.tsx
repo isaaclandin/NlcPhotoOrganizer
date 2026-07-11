@@ -10,13 +10,14 @@ import type { DropboxLoadError } from "./components/PhotoBrowserView";
 import RenameActionBar from "./components/RenameActionBar";
 import type { TagOption, RenameProgress, RenameResult } from "./components/RenameActionBar";
 import RenameConfirmModal from "./components/RenameConfirmModal";
+import UndoConfirmModal from "./components/UndoConfirmModal";
 import SettingsView from "./components/SettingsView";
 import LogsView from "./components/LogsView";
 import DuckLogo from "./components/DuckLogo";
 import { getSettings, updateSettings } from "./services/settingsRepository";
 import { locationsRepository, tagsRepository } from "./services/labelsRepository";
 import { peekNextSequence, recordHighestUsedSequence } from "./services/countersRepository";
-import { applyRetention, createBatch, deleteAllBatches } from "./services/logsRepository";
+import { applyRetention, createBatch, deleteAllBatches, markBatchUndone } from "./services/logsRepository";
 import {
   listFolder,
   listFolderTree,
@@ -33,7 +34,7 @@ import {
   pathForBreadcrumbIndex,
 } from "./utils/dropboxPath";
 import { buildPreviewFilename, buildRenamePattern, formatSequence } from "./utils/naming";
-import type { AppSettings, LabelItem } from "./services/types";
+import type { AppSettings, BatchItemRecord, BatchRecord, LabelItem, NewBatchItem } from "./services/types";
 
 type View = "browser" | "settings" | "logs";
 
@@ -46,6 +47,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   dropboxAppSecret: "",
   dropboxRefreshToken: "",
   lastDropboxPath: "",
+  defaultStartupDropboxPath: null,
 };
 
 export default function App() {
@@ -72,6 +74,10 @@ export default function App() {
   const [dropboxEntries, setDropboxEntries] = useState<DropboxEntry[]>([]);
   const [dropboxLoading, setDropboxLoading] = useState(false);
   const [dropboxError, setDropboxError] = useState<DropboxLoadError | null>(null);
+  // Set once at most, right after startup path resolution falls back from an
+  // invalid saved folder. Persists until manually dismissed rather than being
+  // cleared by every subsequent folder load (see loadDropboxFolder below).
+  const [startupWarning, setStartupWarning] = useState<string | null>(null);
 
   const [thumbnails, setThumbnails] = useState<ThumbnailResultMap>(new Map());
   const [thumbnailWarning, setThumbnailWarning] = useState<string | null>(null);
@@ -91,6 +97,15 @@ export default function App() {
     pattern: string;
     startSequence: number;
     plannedItems: { photo: DropboxFileItem; sequence: number; newName: string; toPath: string }[];
+  } | null>(null);
+
+  const [undoing, setUndoing] = useState(false);
+  const [undoingBatchId, setUndoingBatchId] = useState<string | null>(null);
+  const [undoProgress, setUndoProgress] = useState<RenameProgress | null>(null);
+  const [undoResult, setUndoResult] = useState<RenameResult | null>(null);
+  const [pendingUndo, setPendingUndo] = useState<{
+    batch: BatchRecord;
+    reverseMoves: { itemId: number; fromPath: string; toPath: string; fromName: string; toName: string }[];
   } | null>(null);
 
   const dropboxImageFiles = dropboxEntries.filter(
@@ -161,6 +176,7 @@ export default function App() {
     dropboxPathRef.current = path;
     setSelectedIds(new Set());
     setRenameResult(null);
+    setUndoResult(null);
     setExpandedPaths((prev) => {
       const next = new Set(prev);
       ancestorDropboxPaths(path).forEach((p) => next.add(p));
@@ -191,6 +207,48 @@ export default function App() {
     }
   };
 
+  /**
+   * Picks which folder to open on launch: an explicit defaultStartupDropboxPath
+   * beats lastDropboxPath (the user chose it on purpose), which beats root.
+   * Each non-root candidate is validated with a real listFolder call so a
+   * folder that was since deleted/renamed/access-revoked doesn't get opened
+   * blindly; root is always the final, unconditionally-valid fallback, so
+   * this can never get stuck without landing somewhere.
+   */
+  const resolveStartupPath = async (
+    loadedSettings: AppSettings,
+  ): Promise<{ path: string; warning: string | null }> => {
+    const hasCredentials =
+      loadedSettings.dropboxAppKey.trim() &&
+      loadedSettings.dropboxAppSecret.trim() &&
+      loadedSettings.dropboxRefreshToken.trim();
+    // No credentials yet — every candidate (including root) would fail the
+    // same way, so skip straight to root and let the existing
+    // missing-credentials panel handle it instead of showing a confusing
+    // "saved folder could not be opened" warning first.
+    if (!hasCredentials) return { path: "", warning: null };
+
+    const candidates: string[] = [];
+    if (loadedSettings.defaultStartupDropboxPath !== null) {
+      candidates.push(loadedSettings.defaultStartupDropboxPath);
+    }
+    candidates.push(loadedSettings.lastDropboxPath);
+
+    let anyCandidateFailed = false;
+    for (const candidate of candidates) {
+      if (candidate === "") {
+        return { path: "", warning: anyCandidateFailed ? "Saved startup folder could not be opened." : null };
+      }
+      try {
+        await listFolder(candidate);
+        return { path: candidate, warning: anyCandidateFailed ? "Saved startup folder could not be opened." : null };
+      } catch {
+        anyCandidateFailed = true;
+      }
+    }
+    return { path: "", warning: anyCandidateFailed ? "Saved startup folder could not be opened." : null };
+  };
+
   // initial load of everything persisted
   useEffect(() => {
     (async () => {
@@ -211,8 +269,11 @@ export default function App() {
           .map((t) => t.label),
       );
       setDataLoaded(true);
-      loadDropboxFolder(loadedSettings.lastDropboxPath || "");
+      // Independent of resolving which folder to open, so it starts right away.
       buildFolderTree();
+      const { path: startupPath, warning } = await resolveStartupPath(loadedSettings);
+      if (warning) setStartupWarning(warning);
+      loadDropboxFolder(startupPath);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -360,6 +421,8 @@ export default function App() {
       return {
         originalName: item.photo.name,
         newName: succeeded ? item.newName : "",
+        originalPath: item.photo.pathLower,
+        newPath: succeeded ? item.toPath : "",
         result: succeeded ? ("Success" as const) : ("Failed" as const),
         error: succeeded ? null : (outcome?.error ?? "Rename failed"),
       };
@@ -389,6 +452,11 @@ export default function App() {
                 settings.numberWidth,
               )}`,
         fileCount: items.length,
+        operationType: "rename",
+        undoOfBatchId: null,
+        undoneByBatchId: null,
+        undoStatus: "none",
+        undoneAt: null,
       },
       items,
     );
@@ -417,6 +485,130 @@ export default function App() {
 
     setRenaming(false);
     setRenameProgress(null);
+  };
+
+  const openUndoConfirm = (batch: BatchRecord, items: BatchItemRecord[]) => {
+    if (undoing) return;
+    if (batch.operationType !== "rename" || batch.undoStatus !== "none") return;
+    const successfulItems = items.filter((item) => item.result === "Success");
+    if (successfulItems.length === 0) return;
+    const reverseMoves = successfulItems.map((item) => ({
+      itemId: item.id,
+      fromPath: item.newPath,
+      toPath: item.originalPath,
+      fromName: item.newName,
+      toName: item.originalName,
+    }));
+    setPendingUndo({ batch, reverseMoves });
+  };
+
+  const cancelUndoConfirm = () => {
+    if (undoing) return;
+    setPendingUndo(null);
+  };
+
+  const executeUndo = async () => {
+    if (!pendingUndo || undoing) return;
+    const { batch, reverseMoves } = pendingUndo;
+    setPendingUndo(null);
+
+    setUndoing(true);
+    setUndoingBatchId(batch.id);
+    setUndoResult(null);
+    setUndoProgress({ done: 0, total: reverseMoves.length });
+
+    // Undo reuses the same batch-move orchestrator as forward renames — a
+    // Dropbox move is symmetric, so undoing is just that move run backwards
+    // (new path -> original path). Per-item existence/conflict checks come
+    // for free from move_v2's own atomic validation (surfaced as
+    // "not_found"/"conflict" via renameFile's existing error classification)
+    // rather than doing a separate pre-check round trip, which would just
+    // race the move itself (TOCTOU) without adding any real safety.
+    const { results, aborted, abortReason } = await renameFiles(
+      reverseMoves.map((move) => ({ key: String(move.itemId), fromPath: move.fromPath, toPath: move.toPath })),
+      () => {
+        setUndoProgress((prev) => (prev ? { done: prev.done + 1, total: prev.total } : prev));
+      },
+    );
+
+    if (aborted) {
+      setUndoing(false);
+      setUndoingBatchId(null);
+      setUndoProgress(null);
+      setUndoResult({ tone: "error", message: abortReason ?? "Could not undo rename in Dropbox." });
+      return;
+    }
+
+    const outcomeByKey = new Map(results.map((r) => [r.key, r]));
+    const undoItems: NewBatchItem[] = reverseMoves.map((move) => {
+      const outcome = outcomeByKey.get(String(move.itemId));
+      const succeeded = outcome?.ok ?? false;
+      return {
+        originalName: move.fromName,
+        newName: move.toName,
+        originalPath: move.fromPath,
+        newPath: succeeded ? move.toPath : "",
+        result: succeeded ? ("Success" as const) : ("Failed" as const),
+        error: succeeded ? null : (outcome?.error ?? "Undo failed"),
+      };
+    });
+
+    const successCount = undoItems.filter((item) => item.result === "Success").length;
+    const failCount = undoItems.length - successCount;
+    const undoBatchId = `batch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+    await createBatch(
+      {
+        id: undoBatchId,
+        name: `Undo of ${batch.name}`,
+        createdAt: new Date().toISOString(),
+        status: successCount === undoItems.length ? "Success" : successCount === 0 ? "Failed" : "Partial",
+        folderName: batch.folderName,
+        folderPath: batch.folderPath,
+        location: batch.location,
+        locationGroup: batch.locationGroup,
+        tags: batch.tags,
+        // Undo never assigns or consumes sequence numbers, so there's no range to report.
+        numberingRange: "—",
+        fileCount: undoItems.length,
+        operationType: "undo",
+        undoOfBatchId: batch.id,
+        undoneByBatchId: null,
+        undoStatus: "none",
+        undoneAt: null,
+      },
+      undoItems,
+    );
+
+    // Only mark the original batch undone if at least one file actually
+    // moved back — per spec, a fully-failed undo must leave the original
+    // batch's undo_status untouched at its default "none".
+    if (successCount > 0) {
+      const undoStatus = successCount === reverseMoves.length ? "complete" : "partial";
+      await markBatchUndone(batch.id, undoBatchId, undoStatus);
+    }
+
+    // Deliberately not touching countersRepository anywhere in this
+    // function — undo must never decrement or otherwise modify name
+    // counters, so the counter-mutating functions are simply never called.
+    await applyRetention();
+    setLogsRefreshKey((k) => k + 1);
+
+    const resultMessage =
+      failCount === 0
+        ? "Rename batch undone."
+        : successCount === 0
+          ? "Undo failed. No files were restored."
+          : `Partially undone — ${successCount} of ${undoItems.length} files restored.`;
+
+    if (dropboxPathRef.current === batch.folderPath) {
+      await loadDropboxFolder(batch.folderPath);
+    }
+
+    setUndoResult({ tone: failCount === 0 ? "success" : successCount === 0 ? "error" : "warning", message: resultMessage });
+    setUndoing(false);
+    setUndoingBatchId(null);
+    setUndoProgress(null);
   };
 
   const handleClearAllLogs = async () => {
@@ -530,6 +722,9 @@ export default function App() {
           thumbnailWarning={thumbnailWarning}
           loading={dropboxLoading}
           error={dropboxError}
+          isRoot={dropboxPath === ""}
+          startupWarning={startupWarning}
+          onDismissStartupWarning={() => setStartupWarning(null)}
           selectedIds={selectedIds}
           onTogglePhoto={togglePhoto}
           onToggleSelectAll={toggleSelectAll}
@@ -547,11 +742,21 @@ export default function App() {
           settings={settings}
           locations={locations}
           tags={tags}
+          currentDropboxPath={dropboxPath}
           onSettingsSaved={handleSettingsSaved}
           onLabelsChanged={reloadLabels}
         />
       )}
-      {view === "logs" && <LogsView key={logsRefreshKey} />}
+      {view === "logs" && (
+        <LogsView
+          key={logsRefreshKey}
+          onRequestUndo={openUndoConfirm}
+          undoing={undoing}
+          undoingBatchId={undoingBatchId}
+          undoProgress={undoProgress}
+          undoResult={undoResult}
+        />
+      )}
 
       <RenameConfirmModal
         isOpen={pendingRename !== null}
@@ -563,6 +768,17 @@ export default function App() {
         isRenaming={renaming}
         onCancel={cancelRenameConfirm}
         onConfirm={executeRename}
+      />
+
+      <UndoConfirmModal
+        isOpen={pendingUndo !== null}
+        batchTimestamp={pendingUndo?.batch.createdAt ?? ""}
+        folderPath={pendingUndo?.batch.folderPath || "/"}
+        count={pendingUndo?.reverseMoves.length ?? 0}
+        reverseMoves={pendingUndo?.reverseMoves.map((m) => ({ fromName: m.fromName, toName: m.toName })) ?? []}
+        isUndoing={undoing}
+        onCancel={cancelUndoConfirm}
+        onConfirm={executeUndo}
       />
     </AppShell>
   );
