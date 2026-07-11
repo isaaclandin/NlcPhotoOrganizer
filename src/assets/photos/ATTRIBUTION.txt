@@ -1,0 +1,99 @@
+Placeholder photos sourced via Openverse (openverse.org), commercial+modification licensed.
+For a production app, replace with real Dropbox photos or licensed stock.
+
+clothing_rack.jpg  (query: clothing rack donation store)
+  title: None
+  source: None
+
+donation_boxes.jpg  (query: cardboard donation boxes)
+  title: Decorative Hexagonal Origami Gift Box with Lid: # 17
+  source: https://www.flickr.com/photos/64097751@N00/5705842904
+
+stronger_together.jpg  (query: volunteer group photo outdoor smiling)
+  title: None
+  source: None
+
+reading_room.jpg  (query: woman reading library bookshelf)
+  title: A girl in a library
+  source: https://www.flickr.com/photos/135396164@N05/31981589415
+
+nlc_building.jpg  (query: modern building exterior glass)
+  title: 
+  source: https://www.flickr.com/photos/48282847@N00/206392834
+
+kitchen_volunteers.jpg  (query: volunteers cooking kitchen community)
+  title: 20111031-FNS-LSC-0131
+  source: https://www.flickr.com/photos/41284017@N08/6677173317
+
+dog_adoption.jpg  (query: woman hugging dog adoption shelter)
+  title: None
+  source: None
+
+clothing_drive_today.jpg  (query: clothes rack thrift store)
+  title: 
+  source: https://www.flickr.com/photos/7972895@N02/7839326406
+
+community_event.jpg  (query: community event crowd audience)
+  title: Detroit Jazz Fest receives $100,000 from Knight Foundation to support DJF's Jazz Planet
+  source: https://www.flickr.com/photos/9133668@N08/5218505215
+
+nlc_portrait.jpg  (query: volunteer portrait outdoor smiling green shirt)
+  title: None
+  source: None
+
+living_room.jpg  (query: cozy living room interior sofa)
+  title: Peggy's Zen living room makeover, white sofa, pink tulips, bright pillows, maroon throw, natural woven drum shaped tables, jute rug, refinished floor, old brass floor lamp, Seattle, Washington, USA
+  source: https://www.flickr.com/photos/71401718@N00/465852851
+
+wildflowers.jpg  (query: wildflower meadow riverside)
+  title: Wildflowers alongside the River Ecclesbourne
+  source: https://www.geograph.org.uk/photo/4548741
+
+book_stack.jpg  (query: stack of old books)
+  title: Stack of old books
+  source: https://www.flickr.com/photos/30091649@N06/4216172526
+
+delivery_van.jpg  (query: white delivery van cargo)
+  title: USPS Ford Cargo
+  source: https://www.flickr.com/photos/27665395@N05/14632302406
+
+story_time.jpg  (query: mother child reading book together)
+  title: 2/14/2012
+  source: https://www.flickr.com/photos/11399912@N00/6879083903
+
+community_shelter.jpg  (query: community center building entrance)
+  title: Touro Synagogue, Newport, RI
+  source: https://www.flickr.com/photos/65193799@N00/37864655
+
+warm_hug.jpg  (query: two women hugging friends outdoor)
+  title: None
+  source: None
+
+thank_you_giving.jpg  (query: clothing tag thrift donation)
+  title: None
+  source: None
+
+team_photo.jpg  (query: team group photo outdoor volunteers)
+  title: None
+  source: None
+
+journal_notes.jpg  (query: woman writing journal notebook desk)
+  title: A young woman sits at a wooden desk, writing in her notebook. She appears focused and engaged in her task, with glasses resting in her hand
+  source: https://www.flickr.com/photos/202780880@N02/54513869290
+
+butterfly_garden.jpg  (query: butterfly on purple flower garden)
+  title: Insects and Flowers #1
+  source: https://www.flickr.com/photos/29057345@N04/4897458043
+
+basketball_court.jpg  (query: basketball court players game)
+  title: Iowa State Basketball Tournament
+  source: https://www.flickr.com/photos/88876166@N00/16811802575
+
+folded_donations.jpg  (query: folded clothes donation stack)
+  title: None
+  source: None
+
+golden_sunset.jpg  (query: sunset landscape golden hour field)
+  title: Twin post
+  source: https://www.flickr.com/photos/130836605@N07/33835015518
+
