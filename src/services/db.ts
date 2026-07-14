@@ -41,9 +41,6 @@ CREATE TABLE IF NOT EXISTS settings (
   number_width INTEGER NOT NULL DEFAULT 5,
   log_retention_days INTEGER NOT NULL DEFAULT 7,
   log_retention_min_batches INTEGER NOT NULL DEFAULT 10,
-  dropbox_app_key TEXT NOT NULL DEFAULT '',
-  dropbox_app_secret TEXT NOT NULL DEFAULT '',
-  dropbox_refresh_token TEXT NOT NULL DEFAULT '',
   last_dropbox_path TEXT NOT NULL DEFAULT '',
   -- NULL = not set. '' = Dropbox root, deliberately chosen. Nullable (unlike
   -- last_dropbox_path) so an explicit root default is distinguishable from unset.
@@ -117,6 +114,19 @@ CREATE TABLE IF NOT EXISTS batch_items (
 );
 
 CREATE INDEX IF NOT EXISTS idx_batch_items_batch_id ON batch_items(batch_id);
+
+-- Dropbox OAuth PKCE tokens. Single row (id = 1), present only once the user
+-- has connected — "no row" means "not connected" (see dropboxAuthRepository).
+-- The app key/secret never live here (or anywhere in the frontend): the key
+-- comes from VITE_DROPBOX_APP_KEY at build time, and PKCE auth needs no secret.
+CREATE TABLE IF NOT EXISTS dropbox_auth (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  refresh_token TEXT,
+  access_token TEXT,
+  access_token_expires_at INTEGER,
+  account_email TEXT,
+  account_name TEXT
+);
 `;
 
 /**
@@ -144,6 +154,19 @@ function applyLightweightColumnMigrations(db: import("sql.js").Database): void {
   }
   if (!settingsColumns.has("default_startup_dropbox_path")) {
     db.run("ALTER TABLE settings ADD COLUMN default_startup_dropbox_path TEXT DEFAULT NULL");
+  }
+  // Dropped as part of the PKCE web migration: the app key now comes from
+  // VITE_DROPBOX_APP_KEY at build time, the refresh token lives in
+  // dropbox_auth, and the app secret is never used anywhere in this app.
+  // A pre-existing browser DB may still have these from before that change.
+  if (settingsColumns.has("dropbox_app_key")) {
+    db.run("ALTER TABLE settings DROP COLUMN dropbox_app_key");
+  }
+  if (settingsColumns.has("dropbox_app_secret")) {
+    db.run("ALTER TABLE settings DROP COLUMN dropbox_app_secret");
+  }
+  if (settingsColumns.has("dropbox_refresh_token")) {
+    db.run("ALTER TABLE settings DROP COLUMN dropbox_refresh_token");
   }
 
   const batchColumns = tableColumns(db, "batches");

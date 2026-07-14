@@ -9,13 +9,23 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
 
-  // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
-  //
-  // 1. prevent Vite from obscuring rust errors
+  // GitHub Pages serves project sites from https://USERNAME.github.io/REPO_NAME/,
+  // so every asset URL needs that /REPO_NAME/ prefix baked in at build time.
+  // The deploy workflow sets VITE_BASE_PATH; local dev and Tauri builds
+  // default to "/" (root), which is also correct for a custom-domain Pages
+  // deployment.
+  // @ts-expect-error process is a nodejs global
+  base: process.env.VITE_BASE_PATH || "/",
+
+  // 1. prevent Vite from obscuring rust errors (only matters for the legacy Tauri build)
   clearScreen: false,
-  // 2. tauri expects a fixed port, fail if that port is not available
+  // 2. Vite's own default port, pinned explicitly (rather than left implicit)
+  // so it never silently shifts to another port if 5173 is busy — the
+  // Dropbox OAuth redirect URI for local dev is registered against this
+  // exact origin. The legacy Tauri shell's devUrl (src-tauri/tauri.conf.json)
+  // is kept in sync with this port too.
   server: {
-    port: 1420,
+    port: 5173,
     strictPort: true,
     host: host || false,
     hmr: host

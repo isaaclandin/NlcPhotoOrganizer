@@ -26,6 +26,7 @@ import {
   DropboxServiceError,
 } from "./services/dropboxService";
 import type { ThumbnailResultMap } from "./services/dropboxService";
+import { completeDropboxAuthIfRedirected, hasDropboxRefreshToken } from "./services/dropboxAuth";
 import type { DropboxEntry, DropboxFileItem, FolderTreeNode } from "./services/dropboxTypes";
 import {
   ancestorDropboxPaths,
@@ -43,9 +44,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   numberWidth: 5,
   logRetentionDays: 7,
   logRetentionMinBatches: 10,
-  dropboxAppKey: "",
-  dropboxAppSecret: "",
-  dropboxRefreshToken: "",
   lastDropboxPath: "",
   defaultStartupDropboxPath: null,
 };
@@ -218,15 +216,11 @@ export default function App() {
   const resolveStartupPath = async (
     loadedSettings: AppSettings,
   ): Promise<{ path: string; warning: string | null }> => {
-    const hasCredentials =
-      loadedSettings.dropboxAppKey.trim() &&
-      loadedSettings.dropboxAppSecret.trim() &&
-      loadedSettings.dropboxRefreshToken.trim();
-    // No credentials yet — every candidate (including root) would fail the
-    // same way, so skip straight to root and let the existing
+    // No Dropbox connection yet — every candidate (including root) would
+    // fail the same way, so skip straight to root and let the existing
     // missing-credentials panel handle it instead of showing a confusing
     // "saved folder could not be opened" warning first.
-    if (!hasCredentials) return { path: "", warning: null };
+    if (!(await hasDropboxRefreshToken())) return { path: "", warning: null };
 
     const candidates: string[] = [];
     if (loadedSettings.defaultStartupDropboxPath !== null) {
@@ -269,6 +263,14 @@ export default function App() {
           .map((t) => t.label),
       );
       setDataLoaded(true);
+
+      // If this load is Dropbox redirecting back after the user clicked
+      // Connect Dropbox, finish the PKCE exchange (and strip the auth params
+      // from the URL) before anything below tries to use the connection —
+      // a no-op ({ status: "not-a-callback" }) on every normal page load.
+      const authCallback = await completeDropboxAuthIfRedirected();
+      if (authCallback.status === "error") setStartupWarning(authCallback.message);
+
       // Independent of resolving which folder to open, so it starts right away.
       buildFolderTree();
       const { path: startupPath, warning } = await resolveStartupPath(loadedSettings);

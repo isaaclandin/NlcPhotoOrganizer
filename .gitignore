@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Local env files (Dropbox app key/redirect URI) — .env.example is the
+# committed template and stays tracked.
+.env
+.env.*
+!.env.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

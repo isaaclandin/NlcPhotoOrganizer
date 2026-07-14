@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { Info, Plus, Eye, EyeOff, Link2, CheckCircle2, AlertTriangle, Loader2, Leaf, FolderCog } from "lucide-react";
+import { Info, Plus, Cloud, CloudOff, AlertTriangle, Loader2, Leaf, FolderCog } from "lucide-react";
 import Card from "./Card";
 import Button from "./Button";
 import SortableSettingsList from "./SortableSettingsList";
 import type { SortableItem } from "./SortableSettingsList";
 import { locationsRepository, tagsRepository } from "../services/labelsRepository";
-import { testConnection } from "../services/dropboxService";
+import { beginDropboxAuth, disconnectDropbox, getDropboxConnectionInfo } from "../services/dropboxAuth";
 import type { AppSettings, LabelItem } from "../services/types";
 
 /** "" is a valid, deliberately-chosen path (Dropbox root) — only null means "no folder selected". */
@@ -13,10 +13,11 @@ function describeDropboxPath(path: string): string {
   return path === "" ? "Dropbox root" : path;
 }
 
-type ConnectionState =
-  | { status: "idle" }
-  | { status: "testing" }
-  | { status: "success"; accountName: string; email: string }
+type DropboxConnectionState =
+  | { status: "loading" }
+  | { status: "disconnected" }
+  | { status: "connected"; email: string | null; name: string | null }
+  | { status: "connecting" }
   | { status: "error"; message: string };
 
 interface SettingsViewProps {
@@ -39,20 +40,25 @@ export default function SettingsView({
 }: SettingsViewProps) {
   const [prefix, setPrefix] = useState(settings.basePrefix);
   const [numberWidth, setNumberWidth] = useState(settings.numberWidth);
-  const [appKey, setAppKey] = useState(settings.dropboxAppKey);
-  const [appSecret, setAppSecret] = useState(settings.dropboxAppSecret);
-  const [refreshToken, setRefreshToken] = useState(settings.dropboxRefreshToken);
-  const [showAppKey, setShowAppKey] = useState(false);
-  const [showAppSecret, setShowAppSecret] = useState(false);
-  const [showRefreshToken, setShowRefreshToken] = useState(false);
-  const [connectionState, setConnectionState] = useState<ConnectionState>({ status: "idle" });
+  const [dropboxConnection, setDropboxConnection] = useState<DropboxConnectionState>({ status: "loading" });
 
   // keep local editable copies in sync if settings are reloaded from elsewhere
   useEffect(() => setPrefix(settings.basePrefix), [settings.basePrefix]);
   useEffect(() => setNumberWidth(settings.numberWidth), [settings.numberWidth]);
-  useEffect(() => setAppKey(settings.dropboxAppKey), [settings.dropboxAppKey]);
-  useEffect(() => setAppSecret(settings.dropboxAppSecret), [settings.dropboxAppSecret]);
-  useEffect(() => setRefreshToken(settings.dropboxRefreshToken), [settings.dropboxRefreshToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const info = await getDropboxConnectionInfo();
+      if (cancelled) return;
+      setDropboxConnection(
+        info.connected ? { status: "connected", email: info.email, name: info.name } : { status: "disconnected" },
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const preview = String(1).padStart(numberWidth, "0");
 
@@ -68,22 +74,22 @@ export default function SettingsView({
     if (clamped !== settings.numberWidth) onSettingsSaved({ numberWidth: clamped });
   };
 
-  const commitDropboxField = (field: keyof AppSettings, value: string) => {
-    if (value !== settings[field]) {
-      onSettingsSaved({ [field]: value } as Partial<AppSettings>);
-      // a prior "Connection successful" no longer reflects the edited credentials
-      setConnectionState({ status: "idle" });
+  const handleConnectDropbox = async () => {
+    setDropboxConnection({ status: "connecting" });
+    try {
+      // Redirects the whole page to Dropbox — nothing runs after this on success.
+      await beginDropboxAuth();
+    } catch (err) {
+      setDropboxConnection({
+        status: "error",
+        message: err instanceof Error ? err.message : "Could not start connecting to Dropbox.",
+      });
     }
   };
 
-  const handleTestConnection = async () => {
-    setConnectionState({ status: "testing" });
-    const result = await testConnection();
-    setConnectionState(
-      result.ok
-        ? { status: "success", accountName: result.accountName, email: result.email }
-        : { status: "error", message: result.message },
-    );
+  const handleDisconnectDropbox = async () => {
+    await disconnectDropbox();
+    setDropboxConnection({ status: "disconnected" });
   };
 
   const addLocation = async () => {
@@ -252,69 +258,83 @@ export default function SettingsView({
 
           <Card>
             <div className="flex items-center gap-1.5">
-              <h2 className="text-sm font-semibold text-ink-900">Dropbox Credentials</h2>
+              <h2 className="text-sm font-semibold text-ink-900">Dropbox Connection</h2>
               <Info size={13} className="text-ink-400" />
             </div>
-            <p className="mt-1 text-xs text-ink-500">Use your Dropbox app credentials to access files.</p>
+            <p className="mt-1 text-xs text-ink-500">
+              Connect your Dropbox account to browse and rename files. No credentials to manage — sign in with
+              Dropbox and stay connected.
+            </p>
 
-            <CredentialField
-              label="App Key"
-              value={appKey}
-              visible={showAppKey}
-              onToggle={() => setShowAppKey((v) => !v)}
-              onChange={setAppKey}
-              onBlur={() => commitDropboxField("dropboxAppKey", appKey)}
-            />
-            <CredentialField
-              label="App Secret"
-              value={appSecret}
-              visible={showAppSecret}
-              onToggle={() => setShowAppSecret((v) => !v)}
-              onChange={setAppSecret}
-              onBlur={() => commitDropboxField("dropboxAppSecret", appSecret)}
-            />
-            <CredentialField
-              label="Refresh Token"
-              value={refreshToken}
-              visible={showRefreshToken}
-              onToggle={() => setShowRefreshToken((v) => !v)}
-              onChange={setRefreshToken}
-              onBlur={() => commitDropboxField("dropboxRefreshToken", refreshToken)}
-            />
-
-            <div className="mt-4 flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
-              <Button
-                variant="secondary"
-                icon={connectionState.status === "testing" ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
-                className="!px-3.5 !py-2 text-xs"
-                onClick={handleTestConnection}
-                disabled={connectionState.status === "testing"}
-              >
-                {connectionState.status === "testing" ? "Testing…" : "Test Connection"}
-              </Button>
-
-              {connectionState.status === "success" ? (
-                <span className="flex min-w-0 flex-1 items-start gap-1.5 text-xs font-medium text-forest-600">
-                  <CheckCircle2 size={15} className="mt-0.5 shrink-0" />
-                  <span className="break-words">
-                    Connection successful.
-                    {connectionState.email && (
-                      <span className="ml-1 font-normal text-ink-400">{connectionState.email}</span>
+            <div className="mt-3 rounded-xl border border-beige-300/70 bg-cream-50 px-3.5 py-3">
+              {dropboxConnection.status === "loading" ? (
+                <span className="flex items-center gap-1.5 text-xs font-medium text-ink-400">
+                  <Loader2 size={14} className="animate-spin" />
+                  Checking connection…
+                </span>
+              ) : dropboxConnection.status === "connected" ? (
+                <div className="flex items-start gap-2">
+                  <Cloud size={16} className="mt-0.5 shrink-0 text-forest-600" />
+                  <span className="min-w-0 flex-1 text-xs font-medium text-forest-700">
+                    Connected{dropboxConnection.name ? ` as ${dropboxConnection.name}` : ""}
+                    {dropboxConnection.email && (
+                      <span className="ml-1 block font-normal text-ink-500 sm:inline">
+                        {dropboxConnection.email}
+                      </span>
                     )}
                   </span>
-                </span>
-              ) : connectionState.status === "error" ? (
-                <span className="flex min-w-0 flex-1 items-start gap-1.5 text-xs font-medium text-rose-600">
-                  <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-                  <span className="break-words">{connectionState.message}</span>
-                </span>
-              ) : connectionState.status === "testing" ? (
-                <span className="flex items-center gap-1.5 text-xs font-medium text-ink-400">
-                  <Loader2 size={15} className="animate-spin" />
-                  Testing…
-                </span>
+                </div>
+              ) : dropboxConnection.status === "error" ? (
+                <div className="flex items-start gap-2">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0 text-rose-600" />
+                  <span className="min-w-0 flex-1 break-words text-xs font-medium text-rose-600">
+                    {dropboxConnection.message}
+                  </span>
+                </div>
               ) : (
-                <span className="flex items-center gap-1.5 text-xs font-medium text-ink-400">Not tested yet.</span>
+                <div className="flex items-center gap-2">
+                  <CloudOff size={16} className="shrink-0 text-ink-400" />
+                  <span className="text-xs font-medium text-ink-500">Not connected.</span>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {dropboxConnection.status === "connected" ? (
+                <>
+                  <Button
+                    variant="secondary"
+                    icon={<Cloud size={14} />}
+                    className="!px-3.5 !py-2 text-xs"
+                    onClick={handleConnectDropbox}
+                  >
+                    Reconnect Dropbox
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    icon={<CloudOff size={14} />}
+                    className="!px-3.5 !py-2 text-xs"
+                    onClick={handleDisconnectDropbox}
+                  >
+                    Disconnect Dropbox
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="primary"
+                  icon={
+                    dropboxConnection.status === "connecting" ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <Cloud size={14} />
+                    )
+                  }
+                  className="!px-3.5 !py-2 text-xs"
+                  onClick={handleConnectDropbox}
+                  disabled={dropboxConnection.status === "connecting"}
+                >
+                  {dropboxConnection.status === "connecting" ? "Connecting…" : "Connect Dropbox"}
+                </Button>
               )}
             </div>
           </Card>
@@ -359,46 +379,6 @@ export default function SettingsView({
             </div>
           </Card>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function CredentialField({
-  label,
-  value,
-  visible,
-  onToggle,
-  onChange,
-  onBlur,
-}: {
-  label: string;
-  value: string;
-  visible: boolean;
-  onToggle: () => void;
-  onChange: (value: string) => void;
-  onBlur: () => void;
-}) {
-  return (
-    <div className="mt-3">
-      <label className="mb-1.5 block text-xs font-medium text-ink-700">{label}</label>
-      <div className="flex items-center justify-between rounded-xl border border-beige-300 bg-cream-50 px-3.5 py-2.5">
-        <input
-          type={visible ? "text" : "password"}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onBlur={onBlur}
-          placeholder="Not set"
-          className="w-full truncate bg-transparent font-mono text-sm text-ink-900 outline-none placeholder:font-sans placeholder:text-ink-400"
-        />
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-label={visible ? "Hide" : "Show"}
-          className="ml-2 shrink-0 text-ink-400 hover:text-ink-700"
-        >
-          {visible ? <EyeOff size={15} /> : <Eye size={15} />}
-        </button>
       </div>
     </div>
   );

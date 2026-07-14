@@ -7,9 +7,6 @@ interface SettingsRow {
   number_width: number;
   log_retention_days: number;
   log_retention_min_batches: number;
-  dropbox_app_key: string;
-  dropbox_app_secret: string;
-  dropbox_refresh_token: string;
   last_dropbox_path: string;
   default_startup_dropbox_path: string | null;
 }
@@ -19,9 +16,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   numberWidth: 5,
   logRetentionDays: 7,
   logRetentionMinBatches: 10,
-  dropboxAppKey: "",
-  dropboxAppSecret: "",
-  dropboxRefreshToken: "",
   lastDropboxPath: "",
   defaultStartupDropboxPath: null,
 };
@@ -32,9 +26,6 @@ function mapRow(row: SettingsRow): AppSettings {
     numberWidth: row.number_width,
     logRetentionDays: row.log_retention_days,
     logRetentionMinBatches: row.log_retention_min_batches,
-    dropboxAppKey: row.dropbox_app_key,
-    dropboxAppSecret: row.dropbox_app_secret,
-    dropboxRefreshToken: row.dropbox_refresh_token,
     lastDropboxPath: row.last_dropbox_path ?? "",
     defaultStartupDropboxPath: row.default_startup_dropbox_path ?? null,
   };
@@ -45,16 +36,13 @@ export async function getSettings(): Promise<AppSettings> {
   if (rows.length === 0) {
     await execute(
       `INSERT OR IGNORE INTO settings
-         (id, base_prefix, number_width, log_retention_days, log_retention_min_batches, dropbox_app_key, dropbox_app_secret, dropbox_refresh_token, last_dropbox_path, default_startup_dropbox_path)
-       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, base_prefix, number_width, log_retention_days, log_retention_min_batches, last_dropbox_path, default_startup_dropbox_path)
+       VALUES (1, ?, ?, ?, ?, ?, ?)`,
       [
         DEFAULT_SETTINGS.basePrefix,
         DEFAULT_SETTINGS.numberWidth,
         DEFAULT_SETTINGS.logRetentionDays,
         DEFAULT_SETTINGS.logRetentionMinBatches,
-        DEFAULT_SETTINGS.dropboxAppKey,
-        DEFAULT_SETTINGS.dropboxAppSecret,
-        DEFAULT_SETTINGS.dropboxRefreshToken,
         DEFAULT_SETTINGS.lastDropboxPath,
         DEFAULT_SETTINGS.defaultStartupDropboxPath,
       ],
@@ -73,9 +61,6 @@ export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSe
        number_width = ?,
        log_retention_days = ?,
        log_retention_min_batches = ?,
-       dropbox_app_key = ?,
-       dropbox_app_secret = ?,
-       dropbox_refresh_token = ?,
        last_dropbox_path = ?,
        default_startup_dropbox_path = ?
      WHERE id = 1`,
@@ -84,9 +69,6 @@ export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSe
       next.numberWidth,
       next.logRetentionDays,
       next.logRetentionMinBatches,
-      next.dropboxAppKey,
-      next.dropboxAppSecret,
-      next.dropboxRefreshToken,
       next.lastDropboxPath,
       next.defaultStartupDropboxPath,
     ],

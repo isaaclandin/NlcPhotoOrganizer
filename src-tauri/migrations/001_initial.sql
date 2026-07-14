@@ -8,9 +8,6 @@ CREATE TABLE IF NOT EXISTS settings (
   number_width INTEGER NOT NULL DEFAULT 5,
   log_retention_days INTEGER NOT NULL DEFAULT 7,
   log_retention_min_batches INTEGER NOT NULL DEFAULT 10,
-  dropbox_app_key TEXT NOT NULL DEFAULT '',
-  dropbox_app_secret TEXT NOT NULL DEFAULT '',
-  dropbox_refresh_token TEXT NOT NULL DEFAULT '',
   last_dropbox_path TEXT NOT NULL DEFAULT '',
   -- NULL = not set. '' = Dropbox root, deliberately chosen. Nullable (unlike
   -- last_dropbox_path) so an explicit root default is distinguishable from unset.
@@ -93,3 +90,20 @@ CREATE TABLE IF NOT EXISTS batch_items (
 );
 
 CREATE INDEX IF NOT EXISTS idx_batch_items_batch_id ON batch_items(batch_id);
+
+-- Dropbox OAuth PKCE tokens. Single row (id = 1), present only once the user
+-- has connected — "no row" means "not connected" (see dropboxAuthRepository).
+-- The app key/secret never live here (or anywhere in the frontend): the key
+-- comes from VITE_DROPBOX_APP_KEY at build time, and PKCE auth needs no secret.
+-- Note: the desktop shell has no wired-up redirect handler for the PKCE
+-- browser-redirect flow (see dropboxAuth.ts) — this table exists for schema
+-- parity with the web build's IndexedDB store, not because desktop OAuth is
+-- implemented.
+CREATE TABLE IF NOT EXISTS dropbox_auth (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  refresh_token TEXT,
+  access_token TEXT,
+  access_token_expires_at INTEGER,
+  account_email TEXT,
+  account_name TEXT
+);

@@ -3,9 +3,6 @@ export interface AppSettings {
   numberWidth: number;
   logRetentionDays: number;
   logRetentionMinBatches: number;
-  dropboxAppKey: string;
-  dropboxAppSecret: string;
-  dropboxRefreshToken: string;
   /** Last Dropbox folder path browsed, "" = root. Restored on next launch. */
   lastDropboxPath: string;
   /**

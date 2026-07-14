@@ -114,15 +114,36 @@ export default function PhotoBrowserView({
     return `${selectedIds.size} selected`;
   }, [selectedIds, noneSelected, allSelected]);
 
+  // Shared so it's visible regardless of which state panel/content is
+  // showing below it — including the missing-credentials early return,
+  // which is exactly when a failed-connection-attempt message matters most.
+  const startupWarningBanner = startupWarning && (
+    <div className="mx-6 mt-4 flex items-center gap-2 rounded-xl border border-gold-400/50 bg-gold-300/20 px-3.5 py-2.5 text-xs text-gold-600">
+      <AlertTriangle size={14} className="shrink-0" />
+      <span className="flex-1">{startupWarning}</span>
+      <button
+        type="button"
+        onClick={onDismissStartupWarning}
+        aria-label="Dismiss"
+        className="shrink-0 rounded-lg p-0.5 text-gold-600/70 hover:bg-gold-300/40 hover:text-gold-600"
+      >
+        <X size={13} />
+      </button>
+    </div>
+  );
+
   if (error?.kind === "missing_credentials") {
     return (
-      <DropboxStatePanel
-        icon={CloudOff}
-        heading="Connect Dropbox to start renaming"
-        message="Add your Dropbox app key, app secret, and refresh token in Settings, then come back here."
-        primaryLabel="Go to Settings"
-        onPrimary={onGoToSettings}
-      />
+      <>
+        {startupWarningBanner}
+        <DropboxStatePanel
+          icon={CloudOff}
+          heading="Connect Dropbox to start renaming"
+          message="Connect your Dropbox account in Settings, then come back here."
+          primaryLabel="Go to Settings"
+          onPrimary={onGoToSettings}
+        />
+      </>
     );
   }
 
@@ -202,20 +223,7 @@ export default function PhotoBrowserView({
         </div>
       </div>
 
-      {startupWarning && (
-        <div className="mx-6 mt-4 flex items-center gap-2 rounded-xl border border-gold-400/50 bg-gold-300/20 px-3.5 py-2.5 text-xs text-gold-600">
-          <AlertTriangle size={14} className="shrink-0" />
-          <span className="flex-1">{startupWarning}</span>
-          <button
-            type="button"
-            onClick={onDismissStartupWarning}
-            aria-label="Dismiss"
-            className="shrink-0 rounded-lg p-0.5 text-gold-600/70 hover:bg-gold-300/40 hover:text-gold-600"
-          >
-            <X size={13} />
-          </button>
-        </div>
-      )}
+      {startupWarningBanner}
 
       {loading ? (
         <DropboxStatePanel icon={Loader2} spin heading="Loading folder…" />

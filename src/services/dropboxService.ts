@@ -1,4 +1,5 @@
-import { getSettings } from "./settingsRepository";
+import { refreshAccessToken, invalidateCachedAccessToken, DropboxServiceError } from "./dropboxAuth";
+import type { DropboxErrorKind } from "./dropboxAuth";
 import type {
   DropboxEntry,
   DropboxFileItem,
@@ -8,247 +9,25 @@ import type {
 } from "./dropboxTypes";
 
 /**
- * Dropbox OAuth + account-verification + folder-browsing + rename client.
+ * Dropbox folder-browsing + rename client.
  *
- * Mints a short-lived access token from the persisted refresh token,
- * verifies it (`users/get_current_account`), browses real folder contents
- * (`files/list_folder` (+ `/continue`) and a recursive folder-only tree for
- * the sidebar), fetches grid thumbnails (`files/get_thumbnail_batch`), and
- * renames files for real (`files/move_v2` — Dropbox has no separate rename
- * endpoint; renaming in place is a move to a new path in the same folder).
- * No delete, no undo.
- *
- * The user supplies the refresh token manually (it's generated once via
- * Dropbox's own OAuth flow outside this app); we never redirect to Dropbox
- * or run a browser login flow here.
+ * Auth (OAuth PKCE, token refresh, connect/disconnect) lives in
+ * dropboxAuth.ts — this module just calls `refreshAccessToken()` before
+ * every request. Browses real folder contents (`files/list_folder` (+
+ * `/continue`) and a recursive folder-only tree for the sidebar), fetches
+ * grid thumbnails (`files/get_thumbnail_batch`), and renames files for real
+ * (`files/move_v2` — Dropbox has no separate rename endpoint; renaming in
+ * place is a move to a new path in the same folder). No delete.
  */
 
-const TOKEN_URL = "https://api.dropboxapi.com/oauth2/token";
-const CURRENT_ACCOUNT_URL = "https://api.dropboxapi.com/2/users/get_current_account";
+// Re-exported so existing call sites (`import { DropboxServiceError } from
+// "./dropboxService"`) keep working unchanged — the types/class now live in
+// dropboxAuth.ts alongside the refresh logic that throws them.
+export { DropboxServiceError };
+export type { DropboxErrorKind };
+
 const LIST_FOLDER_URL = "https://api.dropboxapi.com/2/files/list_folder";
 const LIST_FOLDER_CONTINUE_URL = "https://api.dropboxapi.com/2/files/list_folder/continue";
-
-/** Refresh 60s before the token's real expiry to avoid edge-of-window failures. */
-const EXPIRY_SAFETY_MARGIN_MS = 60_000;
-/** Dropbox short-lived tokens default to 4 hours if `expires_in` is omitted. */
-const DEFAULT_EXPIRES_IN_SECONDS = 4 * 60 * 60;
-
-export type DropboxErrorKind =
-  | "missing_credentials"
-  | "invalid_refresh_token"
-  | "invalid_client"
-  | "invalid_token"
-  | "path_not_found"
-  | "access_denied"
-  | "network"
-  | "unknown";
-
-export class DropboxServiceError extends Error {
-  kind: DropboxErrorKind;
-  constructor(message: string, kind: DropboxErrorKind) {
-    super(message);
-    this.name = "DropboxServiceError";
-    this.kind = kind;
-  }
-}
-
-export interface DropboxCredentials {
-  appKey: string;
-  appSecret: string;
-  refreshToken: string;
-}
-
-/**
- * Read the persisted Dropbox credentials from settings and validate all
- * three are present. Throws a user-friendly `DropboxServiceError` if not —
- * never returns partial/empty credentials.
- */
-export async function getDropboxCredentials(): Promise<DropboxCredentials> {
-  const settings = await getSettings();
-  const appKey = settings.dropboxAppKey.trim();
-  const appSecret = settings.dropboxAppSecret.trim();
-  const refreshToken = settings.dropboxRefreshToken.trim();
-
-  if (!appKey || !appSecret || !refreshToken) {
-    throw new DropboxServiceError(
-      "Add your Dropbox app key, app secret, and refresh token first.",
-      "missing_credentials",
-    );
-  }
-
-  return { appKey, appSecret, refreshToken };
-}
-
-// In-memory only — intentionally not persisted anywhere (not settings, not
-// localStorage, not the sqlite/sql.js db). Lost on reload by design.
-interface CachedAccessToken {
-  accessToken: string;
-  expiresAt: number;
-  /** Derived from appKey+refreshToken (never the secret) so editing credentials invalidates the cache. */
-  credentialsKey: string;
-}
-let cachedToken: CachedAccessToken | null = null;
-
-/** Force the next `refreshAccessToken()` call to hit the network instead of reusing the cache. */
-function invalidateCachedToken(): void {
-  cachedToken = null;
-}
-
-function credentialsKey(creds: DropboxCredentials): string {
-  return `${creds.appKey}::${creds.refreshToken}`;
-}
-
-async function parseErrorTag(response: Response): Promise<string> {
-  try {
-    const body = await response.json();
-    if (typeof body?.error === "string") return body.error;
-    if (typeof body?.error?.[".tag"] === "string") return body.error[".tag"];
-    if (typeof body?.error_summary === "string") return body.error_summary;
-  } catch {
-    // response body wasn't JSON (or was empty) — fall through with no tag
-  }
-  return "";
-}
-
-/**
- * Exchange the persisted refresh token for a short-lived access token.
- * Reuses the in-memory cached token while it's still valid; otherwise hits
- * Dropbox's OAuth token endpoint. Never writes the access token to disk.
- */
-export async function refreshAccessToken(): Promise<string> {
-  const creds = await getDropboxCredentials();
-  const key = credentialsKey(creds);
-  const now = Date.now();
-
-  if (cachedToken && cachedToken.credentialsKey === key && cachedToken.expiresAt - EXPIRY_SAFETY_MARGIN_MS > now) {
-    return cachedToken.accessToken;
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(TOKEN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: creds.refreshToken,
-        client_id: creds.appKey,
-        client_secret: creds.appSecret,
-      }).toString(),
-    });
-  } catch {
-    throw new DropboxServiceError(
-      "Could not reach Dropbox. Check your internet connection and try again.",
-      "network",
-    );
-  }
-
-  if (!response.ok) {
-    // The OAuth token endpoint returns errors shaped like
-    // {"error": "invalid_client: Invalid client_id or client_secret"} —
-    // a tag prefix followed by a human description, not a bare tag — so
-    // this must be a prefix check, not an exact match.
-    const errorTag = await parseErrorTag(response);
-
-    if (errorTag.startsWith("invalid_grant")) {
-      throw new DropboxServiceError(
-        "Dropbox rejected the refresh token. Generate a new refresh token and try again.",
-        "invalid_refresh_token",
-      );
-    }
-    if (errorTag.startsWith("invalid_client") || response.status === 401) {
-      throw new DropboxServiceError(
-        "Dropbox rejected the app credentials. Check the app key and secret.",
-        "invalid_client",
-      );
-    }
-    if (response.status === 400) {
-      // Most 400s on this endpoint that aren't a recognized tag are still a
-      // bad refresh token (expired/revoked) rather than a malformed request.
-      throw new DropboxServiceError(
-        "Dropbox rejected the refresh token. Generate a new refresh token and try again.",
-        "invalid_refresh_token",
-      );
-    }
-    throw new DropboxServiceError("Dropbox returned an unexpected error. Please try again.", "unknown");
-  }
-
-  let data: { access_token?: string; expires_in?: number };
-  try {
-    data = await response.json();
-  } catch {
-    throw new DropboxServiceError("Dropbox returned an unexpected error. Please try again.", "unknown");
-  }
-
-  if (!data.access_token) {
-    throw new DropboxServiceError("Dropbox returned an unexpected error. Please try again.", "unknown");
-  }
-
-  const expiresInMs = (data.expires_in ?? DEFAULT_EXPIRES_IN_SECONDS) * 1000;
-  cachedToken = {
-    accessToken: data.access_token,
-    expiresAt: now + expiresInMs,
-    credentialsKey: key,
-  };
-
-  return cachedToken.accessToken;
-}
-
-export type TestConnectionResult =
-  | { ok: true; accountName: string; email: string }
-  | { ok: false; message: string };
-
-/**
- * End-to-end credential check: refresh (or reuse) an access token, then call
- * `users/get_current_account` to confirm it actually works and fetch a
- * human-readable account name/email for display. Never throws — all
- * failure paths resolve to `{ ok: false, message }` with a safe, secret-free
- * message.
- */
-export async function testConnection(): Promise<TestConnectionResult> {
-  let accessToken: string;
-  try {
-    accessToken = await refreshAccessToken();
-  } catch (err) {
-    if (err instanceof DropboxServiceError) return { ok: false, message: err.message };
-    return { ok: false, message: "Something went wrong testing the connection." };
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(CURRENT_ACCOUNT_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: "null",
-    });
-  } catch {
-    return { ok: false, message: "Could not reach Dropbox. Check your internet connection and try again." };
-  }
-
-  if (!response.ok) {
-    if (response.status === 401) {
-      return { ok: false, message: "Dropbox rejected the access token. Try testing the connection again." };
-    }
-    return { ok: false, message: "Dropbox returned an unexpected error. Please try again." };
-  }
-
-  try {
-    const data = (await response.json()) as {
-      name?: { display_name?: string };
-      email?: string;
-    };
-    return {
-      ok: true,
-      accountName: data.name?.display_name ?? "Dropbox account",
-      email: data.email ?? "",
-    };
-  } catch {
-    return { ok: false, message: "Dropbox returned an unexpected error. Please try again." };
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Folder listing
@@ -356,7 +135,7 @@ async function callWithTokenRetry(makeRequest: (accessToken: string) => Promise<
   let response = await safeFetch(() => makeRequest(token));
 
   if (response.status === 401) {
-    invalidateCachedToken();
+    invalidateCachedAccessToken();
     const freshToken = await refreshAccessToken();
     response = await safeFetch(() => makeRequest(freshToken));
   }

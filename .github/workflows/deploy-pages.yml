@@ -1,0 +1,64 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment at a time; let an in-flight one finish rather
+# than cancelling it mid-deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # VITE_DROPBOX_APP_KEY/VITE_DROPBOX_REDIRECT_URI are Actions
+      # *variables* (Settings -> Secrets and variables -> Actions ->
+      # Variables), not secrets — the app key is a public OAuth client_id
+      # (safe to ship in the built JS bundle; that's the point of PKCE for
+      # public clients) and the app secret is never used anywhere in this
+      # repo. VITE_BASE_PATH is derived from the repo name so this works
+      # out of the box at https://<owner>.github.io/<repo>/.
+      - name: Build
+        env:
+          VITE_DROPBOX_APP_KEY: ${{ vars.VITE_DROPBOX_APP_KEY }}
+          VITE_DROPBOX_REDIRECT_URI: ${{ vars.VITE_DROPBOX_REDIRECT_URI }}
+          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+        run: npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
