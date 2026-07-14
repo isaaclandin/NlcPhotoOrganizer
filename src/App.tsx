@@ -21,6 +21,7 @@ import { applyRetention, createBatch, deleteAllBatches, markBatchUndone } from "
 import {
   listFolder,
   listFolderTree,
+  collectFolderPaths,
   getThumbnails,
   renameFiles,
   DropboxServiceError,
@@ -109,6 +110,11 @@ export default function App() {
   const dropboxImageFiles = dropboxEntries.filter(
     (e): e is DropboxFileItem => e.type === "file" && e.isImage,
   );
+  // Whether the *current* folder has subfolders — independent of the
+  // recursive sidebar tree crawl, since this comes straight from the same
+  // listFolder() call that already populated dropboxEntries. Used to tell
+  // "no photos here, but keep browsing" apart from "genuinely empty."
+  const dropboxHasSubfolders = dropboxEntries.some((e) => e.type === "folder");
 
   const buildFolderTree = () => {
     folderTreeAbortRef.current?.abort();
@@ -119,6 +125,17 @@ export default function App() {
       if (controller.signal.aborted) return;
       setFolderTree(tree);
       setFolderTreeLoading(false);
+      // Auto-expand every folder the crawl found (this Dropbox isn't
+      // massive) so nested folders are visible immediately instead of
+      // requiring the user to manually click through each parent first.
+      // Merged onto whatever's already expanded, so a manual collapse made
+      // earlier in the session isn't clobbered by a later refresh picking
+      // up newly-created folders.
+      setExpandedPaths((prev) => {
+        const next = new Set(prev);
+        collectFolderPaths(tree).forEach((p) => next.add(p));
+        return next;
+      });
     });
   };
 
@@ -725,6 +742,7 @@ export default function App() {
           loading={dropboxLoading}
           error={dropboxError}
           isRoot={dropboxPath === ""}
+          hasSubfolders={dropboxHasSubfolders}
           startupWarning={startupWarning}
           onDismissStartupWarning={() => setStartupWarning(null)}
           selectedIds={selectedIds}

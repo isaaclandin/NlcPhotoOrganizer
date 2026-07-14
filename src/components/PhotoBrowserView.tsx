@@ -70,6 +70,8 @@ interface PhotoBrowserViewProps {
   error: DropboxLoadError | null;
   /** True when the currently open folder is Dropbox root — changes the empty-state copy. */
   isRoot: boolean;
+  /** True if the current folder contains subfolders — distinguishes "no photos here yet, keep browsing" from "genuinely empty." */
+  hasSubfolders: boolean;
   /** Non-blocking notice shown once if the saved startup folder couldn't be opened. */
   startupWarning: string | null;
   onDismissStartupWarning: () => void;
@@ -92,6 +94,7 @@ export default function PhotoBrowserView({
   loading,
   error,
   isRoot,
+  hasSubfolders,
   startupWarning,
   onDismissStartupWarning,
   selectedIds,
@@ -250,8 +253,14 @@ export default function PhotoBrowserView({
           heading="Choose a photo folder"
           message="Select a Dropbox folder from the sidebar to view and rename photos. You can set a startup folder in Settings."
         />
+      ) : files.length === 0 && hasSubfolders ? (
+        <DropboxStatePanel
+          icon={FolderSearch}
+          heading="No photos directly in this folder"
+          message="Choose a subfolder from the sidebar to view its photos."
+        />
       ) : files.length === 0 ? (
-        <DropboxStatePanel icon={ImageOff} heading="No photos in this folder" message="This folder doesn't contain any supported image files yet." />
+        <DropboxStatePanel icon={ImageOff} heading="No supported photos found in this folder" message="This folder doesn't contain any supported image files." />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
           {thumbnailWarning && (

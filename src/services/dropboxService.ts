@@ -396,8 +396,8 @@ export async function getThumbnails(
 // Recursive folder tree (sidebar) — folders only, no files, no thumbnails
 // ---------------------------------------------------------------------------
 
-const DEFAULT_MAX_DEPTH = 8;
-const DEFAULT_MAX_FOLDERS = 2000;
+const DEFAULT_MAX_DEPTH = 10;
+const DEFAULT_MAX_FOLDERS = 5000;
 
 export interface ListFolderTreeOptions {
   maxDepth?: number;
@@ -477,6 +477,21 @@ export async function listFolderTree(
   }
 
   return buildNode(rootPath, "Dropbox", rootPath, 0);
+}
+
+/**
+ * Every folder path present in a tree built by listFolderTree, root
+ * included. Used to fully auto-expand the sidebar after a (re)build so
+ * nested folders are visible immediately — this Dropbox isn't massive, so
+ * there's no need to make the user manually click through each parent
+ * folder before deeper ones appear.
+ */
+export function collectFolderPaths(node: FolderTreeNode, out: string[] = []): string[] {
+  out.push(node.pathLower);
+  for (const child of node.children) {
+    collectFolderPaths(child, out);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
