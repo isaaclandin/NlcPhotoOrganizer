@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Leaf, CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
+import { CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
 import BatchList from "./BatchList";
 import BatchDetail from "./BatchDetail";
 import { getBatch, getBatchItems, listBatches } from "../services/logsRepository";
@@ -86,35 +86,28 @@ export default function LogsView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col px-6 pb-6 pt-4">
-      <div className="mb-3">
-        <h1 className="flex items-center gap-2 font-serif text-xl font-semibold text-forest-700">
-          Batch History
-          <Leaf size={16} className="text-sage-400" />
-        </h1>
-        <p className="mt-0.5 text-sm text-ink-500">
-          Review your rename activity and download logs.
-        </p>
-        {undoResult && (
-          <div
-            className={`mt-2 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium ${
-              undoResult.tone === "success"
-                ? "bg-sage-100 text-forest-700"
-                : undoResult.tone === "warning"
-                  ? "bg-gold-300/40 text-gold-600"
-                  : "bg-rose-100 text-rose-700"
-            }`}
-          >
-            {undoResult.tone === "success" ? (
-              <CheckCircle2 size={13} />
-            ) : undoResult.tone === "warning" ? (
-              <AlertTriangle size={13} />
-            ) : (
-              <XCircle size={13} />
-            )}
-            {undoResult.message}
-          </div>
-        )}
-      </div>
+      {/* No page title here — the breadcrumb ("Logs / Batch History") and
+          the highlighted sidebar nav item already identify this view. */}
+      {undoResult && (
+        <div
+          className={`mb-3 inline-flex items-center gap-1.5 self-start rounded-lg px-3 py-1.5 text-xs font-medium ${
+            undoResult.tone === "success"
+              ? "bg-sage-100 text-forest-700"
+              : undoResult.tone === "warning"
+                ? "bg-gold-300/40 text-gold-600"
+                : "bg-rose-100 text-rose-700"
+          }`}
+        >
+          {undoResult.tone === "success" ? (
+            <CheckCircle2 size={13} />
+          ) : undoResult.tone === "warning" ? (
+            <AlertTriangle size={13} />
+          ) : (
+            <XCircle size={13} />
+          )}
+          {undoResult.message}
+        </div>
+      )}
 
       {/* grid-rows-1 forces the single row to 1fr — without it, an implicit
           auto-sized row only grows to fit its content, so the detail panel

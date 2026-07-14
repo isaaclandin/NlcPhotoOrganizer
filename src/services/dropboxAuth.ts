@@ -83,6 +83,19 @@ function getRedirectUri(): string {
   return redirectUri;
 }
 
+/**
+ * Read-only, non-throwing view of the exact VITE_DROPBOX_REDIRECT_URI value
+ * this build was compiled with — for display in Settings so a trailing-slash
+ * mismatch (a common GitHub Pages project-site gotcha: Dropbox requires an
+ * exact string match against the registered redirect URI, slash included)
+ * is visible without opening devtools. Never normalizes the value — this is
+ * deliberately the same untouched string beginDropboxAuth() sends to
+ * Dropbox, whitespace-trimmed only, nothing stripped or appended.
+ */
+export function getConfiguredRedirectUri(): string {
+  return import.meta.env.VITE_DROPBOX_REDIRECT_URI.trim();
+}
+
 // ---------------------------------------------------------------------------
 // PKCE helpers
 // ---------------------------------------------------------------------------

@@ -5,7 +5,12 @@ import Button from "./Button";
 import SortableSettingsList from "./SortableSettingsList";
 import type { SortableItem } from "./SortableSettingsList";
 import { locationsRepository, tagsRepository } from "../services/labelsRepository";
-import { beginDropboxAuth, disconnectDropbox, getDropboxConnectionInfo } from "../services/dropboxAuth";
+import {
+  beginDropboxAuth,
+  disconnectDropbox,
+  getDropboxConnectionInfo,
+  getConfiguredRedirectUri,
+} from "../services/dropboxAuth";
 import type { AppSettings, LabelItem } from "../services/types";
 
 /** "" is a valid, deliberately-chosen path (Dropbox root) — only null means "no folder selected". */
@@ -41,6 +46,11 @@ export default function SettingsView({
   const [prefix, setPrefix] = useState(settings.basePrefix);
   const [numberWidth, setNumberWidth] = useState(settings.numberWidth);
   const [dropboxConnection, setDropboxConnection] = useState<DropboxConnectionState>({ status: "loading" });
+  // Static per build (baked in from VITE_DROPBOX_REDIRECT_URI at build time),
+  // not user data — shown so a trailing-slash mismatch against the Dropbox
+  // App Console's registered redirect URI is visible without devtools.
+  const configuredRedirectUri = getConfiguredRedirectUri();
+  const redirectUriMissingSlash = configuredRedirectUri !== "" && !configuredRedirectUri.endsWith("/");
 
   // keep local editable copies in sync if settings are reloaded from elsewhere
   useEffect(() => setPrefix(settings.basePrefix), [settings.basePrefix]);
@@ -147,7 +157,7 @@ export default function SettingsView({
   };
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+    <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-4">
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="flex flex-col gap-6">
           <Card className="relative overflow-hidden">
@@ -298,6 +308,20 @@ export default function SettingsView({
                 </div>
               )}
             </div>
+
+            <p className="mt-2 break-all text-[11px] text-ink-400">
+              Redirect URI: <span className="font-mono">{configuredRedirectUri || "(not set)"}</span>
+            </p>
+            {redirectUriMissingSlash && (
+              <p className="mt-1 flex items-start gap-1.5 text-[11px] font-medium text-gold-600">
+                <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                <span>
+                  This doesn't end with a slash. GitHub Pages project sites are served at a trailing-slash path
+                  (e.g. .../repo-name/) — make sure VITE_DROPBOX_REDIRECT_URI and the redirect URI registered in
+                  the Dropbox App Console both end with "/", exactly matching.
+                </span>
+              </p>
+            )}
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {dropboxConnection.status === "connected" ? (

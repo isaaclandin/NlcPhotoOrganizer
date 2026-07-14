@@ -21,30 +21,25 @@ export default function Header({
   settingsActive,
 }: HeaderProps) {
   return (
-    <header className="relative overflow-hidden border-b border-beige-300/60 bg-cream-100 px-6 pb-4 pt-5">
+    <header className="relative overflow-hidden border-b border-beige-300/60 bg-cream-100 px-6 pb-3 pt-3">
       <img
         src={headerLeafBranchReference}
         alt=""
         role="presentation"
         draggable={false}
-        className="pointer-events-none absolute -right-3 -top-5 h-auto w-40 select-none opacity-80"
+        className="pointer-events-none absolute -right-2 -top-3 h-auto w-24 select-none opacity-80"
       />
 
       <div className="relative flex items-center justify-between gap-6">
         <button
           type="button"
           onClick={onTitleClick}
-          className="flex items-center gap-2.5 rounded-xl text-left transition-opacity hover:opacity-80"
+          className="flex items-center gap-2 rounded-xl text-left transition-opacity hover:opacity-80"
         >
-          <DuckLogo size={60} />
-          <div>
-            <h1 className="font-serif text-[26px] font-bold leading-tight tracking-tight text-forest-700">
-              NLC Photo Renamer
-            </h1>
-            <p className="mt-0.5 text-sm text-ink-500">
-              Organize with heart. Rename with ease.
-            </p>
-          </div>
+          <DuckLogo size={32} />
+          <h1 className="font-serif text-lg font-bold leading-tight tracking-tight text-forest-700">
+            NLC Photo Renamer
+          </h1>
         </button>
 
         <div className="flex items-center gap-3">
@@ -71,7 +66,7 @@ export default function Header({
         </div>
       </div>
 
-      <div className="relative mt-4">
+      <div className="relative mt-3">
         <BreadcrumbBar items={breadcrumbItems} onNavigate={onBreadcrumbNavigate} />
       </div>
     </header>
