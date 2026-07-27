@@ -5,7 +5,8 @@
  * directly inside it, must recurse past image-free intermediate folders,
  * and must paginate every level's listing fully.
  */
-import { listFolderTree, collectFolderPaths, findFolderNode } from "../src/services/dropboxService";
+import { listFolderTree, collectFolderPaths, findFolderNode, refreshFolderNode } from "../src/services/dropboxService";
+import type { FolderTreeNode } from "../src/services/dropboxTypes";
 
 interface Check {
   name: string;
@@ -66,9 +67,23 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-/** `pages[path]` is an array of entry-arrays; if length > 1, the mock serves them across separate list_folder/continue calls to exercise pagination. */
-function installFetchMock(pages: Record<string, (RawFolder | RawFile)[][]>) {
+/**
+ * `flaky[path]` makes the mock return `status` (with an error_summary body)
+ * for the first `failTimes` calls to that exact path's list_folder, then
+ * fall through to real data — for testing retry-on-transient-error.
+ */
+interface FlakyPathState {
+  failTimes: number;
+  status: number;
+}
+
+/** `pages[path]` is an array of entry-arrays; if length > 1, the mock serves them across separate list_folder/continue calls to exercise pagination. Returns the exact `path` values received by list_folder, in call order, so tests can assert special characters/casing survive untouched. */
+function installFetchMock(
+  pages: Record<string, (RawFolder | RawFile)[][]>,
+  flaky: Record<string, FlakyPathState> = {},
+) {
   const cursorState = new Map<string, { path: string; pageIndex: number }>();
+  const receivedPaths: string[] = [];
   let cursorCounter = 0;
 
   globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
@@ -87,18 +102,28 @@ function installFetchMock(pages: Record<string, (RawFolder | RawFile)[][]>) {
     }
 
     if (urlStr.includes("/files/list_folder")) {
-      const path = String(body.path ?? "").toLowerCase();
-      const pageList = pages[path];
+      const path = String(body.path ?? "");
+      receivedPaths.push(path);
+
+      const flakyState = flaky[path.toLowerCase()];
+      if (flakyState && flakyState.failTimes > 0) {
+        flakyState.failTimes -= 1;
+        return jsonResponse({ error_summary: "internal_error/.." }, flakyState.status);
+      }
+
+      const pageList = pages[path.toLowerCase()];
       if (!pageList) return jsonResponse({ error_summary: "path/not_found/.." }, 409);
       const entries = pageList[0] ?? [];
       const hasMore = pageList.length > 1;
       const cursor = `cursor-${cursorCounter++}`;
-      if (hasMore) cursorState.set(cursor, { path, pageIndex: 1 });
+      if (hasMore) cursorState.set(cursor, { path: path.toLowerCase(), pageIndex: 1 });
       return jsonResponse({ entries, cursor, has_more: hasMore });
     }
 
     throw new Error(`Unexpected fetch() in verify-folder-tree: ${urlStr}`);
   }) as typeof fetch;
+
+  return { receivedPaths };
 }
 
 function singlePage(path: string, subfolders: string[], files: string[] = []): (RawFolder | RawFile)[][] {
@@ -198,6 +223,170 @@ function singlePage(path: string, subfolders: string[], files: string[] = []): (
   const allPaths = collectFolderPaths(tree);
   assertTrue("Scenario 3: page 1 folder discovered", allPaths.includes("/pageonefolder"));
   assertTrue("Scenario 3: page 2 folder discovered (via list_folder/continue)", allPaths.includes("/pagetwofolder"));
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 4 — Root/Base/SubfolderA/{ChildFolderA1, ChildFolderA2},
+//              Root/Base/SubfolderB/{ChildFolderB1}
+// The exact structure from the live bug report: depth-2 folders (SubfolderA,
+// SubfolderB) visible, but their depth-3 children were missing with an
+// error icon. ChildFolderA1 has a photo; the rest don't.
+// ---------------------------------------------------------------------------
+{
+  const BASE = "/base";
+  const SUB_A = `${BASE}/subfoldera`;
+  const SUB_B = `${BASE}/subfolderb`;
+  const CHILD_A1 = `${SUB_A}/childfoldera1`;
+  const CHILD_A2 = `${SUB_A}/childfoldera2`;
+  const CHILD_B1 = `${SUB_B}/childfolderb1`;
+
+  installFetchMock({
+    "": singlePage("", ["Base"]),
+    [BASE]: singlePage(BASE, ["SubfolderA", "SubfolderB"]),
+    [SUB_A]: singlePage(SUB_A, ["ChildFolderA1", "ChildFolderA2"]),
+    [SUB_B]: singlePage(SUB_B, ["ChildFolderB1"]),
+    [CHILD_A1]: singlePage(CHILD_A1, [], ["photo.jpg"]),
+    [CHILD_A2]: singlePage(CHILD_A2, []),
+    [CHILD_B1]: singlePage(CHILD_B1, []),
+  });
+
+  const tree = await listFolderTree("");
+  const allPaths = collectFolderPaths(tree);
+
+  for (const p of [BASE, SUB_A, SUB_B, CHILD_A1, CHILD_A2, CHILD_B1]) {
+    assertTrue(`Scenario 4: tree contains ${p}`, allPaths.includes(p), `not found in [${allPaths.join(", ")}]`);
+  }
+
+  function hasAnyError(node: FolderTreeNode): boolean {
+    return Boolean(node.error) || node.children.some(hasAnyError);
+  }
+  assertTrue("Scenario 4: no error state anywhere in the tree", !hasAnyError(tree));
+  assertEqual("Scenario 4: ChildFolderA1.directImageCount", findFolderNode(tree, CHILD_A1)?.directImageCount, 1);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 5 — same shape as Scenario 4, but every folder has zero images.
+// ---------------------------------------------------------------------------
+{
+  const BASE = "/base5";
+  const SUB_A = `${BASE}/subfoldera`;
+  const SUB_B = `${BASE}/subfolderb`;
+  const CHILD_A1 = `${SUB_A}/childfoldera1`;
+  const CHILD_A2 = `${SUB_A}/childfoldera2`;
+  const CHILD_B1 = `${SUB_B}/childfolderb1`;
+
+  installFetchMock({
+    "": singlePage("", ["Base5"]),
+    [BASE]: singlePage(BASE, ["SubfolderA", "SubfolderB"]),
+    [SUB_A]: singlePage(SUB_A, ["ChildFolderA1", "ChildFolderA2"]),
+    [SUB_B]: singlePage(SUB_B, ["ChildFolderB1"]),
+    [CHILD_A1]: singlePage(CHILD_A1, []),
+    [CHILD_A2]: singlePage(CHILD_A2, []),
+    [CHILD_B1]: singlePage(CHILD_B1, []),
+  });
+
+  const tree = await listFolderTree("");
+  const allPaths = collectFolderPaths(tree);
+
+  for (const p of [BASE, SUB_A, SUB_B, CHILD_A1, CHILD_A2, CHILD_B1]) {
+    assertTrue(`Scenario 5: tree contains ${p} (zero-image folders still appear)`, allPaths.includes(p));
+  }
+  for (const p of [BASE, SUB_A, SUB_B, CHILD_A1, CHILD_A2, CHILD_B1]) {
+    const node = findFolderNode(tree, p);
+    assertTrue(`Scenario 5: ${p} has no error`, !node?.error);
+    assertEqual(`Scenario 5: ${p}.directImageCount is accurately 0`, node?.directImageCount, 0);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 6 — depth-3+ path with spaces, parentheses: exact Dropbox paths
+// (not URL-encoded, not case-mangled beyond Dropbox's own lowercase
+// convention) must be what's actually sent to list_folder.
+//   Root/Marketing Photos/2026 Events/Summer Picnic (Edited)/Final Picks
+// ---------------------------------------------------------------------------
+{
+  const L1 = "/marketing photos";
+  const L2 = `${L1}/2026 events`;
+  const L3 = `${L2}/summer picnic (edited)`;
+  const L4 = `${L3}/final picks`;
+
+  const mock = installFetchMock({
+    "": singlePage("", ["Marketing Photos"]),
+    [L1]: singlePage(L1, ["2026 Events"]),
+    [L2]: singlePage(L2, ["Summer Picnic (Edited)"]),
+    [L3]: singlePage(L3, ["Final Picks"]),
+    [L4]: singlePage(L4, []),
+  });
+
+  const tree = await listFolderTree("");
+  const allPaths = collectFolderPaths(tree);
+
+  for (const p of [L1, L2, L3, L4]) {
+    assertTrue(`Scenario 6: tree contains "${p}"`, allPaths.includes(p), `not found in [${allPaths.join(", ")}]`);
+  }
+  assertTrue(
+    'Scenario 6: exact path with spaces/parens sent to list_folder for depth-3 folder',
+    mock.receivedPaths.includes(L3),
+    `receivedPaths: ${JSON.stringify(mock.receivedPaths)}`,
+  );
+  assertTrue(
+    'Scenario 6: exact path sent to list_folder for depth-4 folder',
+    mock.receivedPaths.includes(L4),
+    `receivedPaths: ${JSON.stringify(mock.receivedPaths)}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 7 — transient 429/5xx handling for a depth-3 folder.
+// (a) Fails once (429), succeeds on the built-in retry -> no error, node
+//     is fully populated, exactly as if it had never failed.
+// (b) Fails every attempt -> error is visible with status/summary attached,
+//     then the per-node refreshFolderNode "Retry" recovers it once the
+//     mock stops failing.
+// ---------------------------------------------------------------------------
+{
+  const BASE = "/flakybase";
+  const SUB = `${BASE}/subfolder`;
+  const FLAKY_ONCE = `${SUB}/recovers-after-one-429`;
+  const FLAKY_ALWAYS = `${SUB}/always-429`;
+
+  const flakyOnceState: FlakyPathState = { failTimes: 1, status: 429 };
+  const alwaysFailState: FlakyPathState = { failTimes: 99, status: 429 };
+
+  installFetchMock(
+    {
+      "": singlePage("", ["FlakyBase"]),
+      [BASE]: singlePage(BASE, ["Subfolder"]),
+      [SUB]: singlePage(SUB, ["Recovers-After-One-429", "Always-429"]),
+      [FLAKY_ONCE]: singlePage(FLAKY_ONCE, ["Child"]),
+      [`${FLAKY_ONCE}/child`]: singlePage(`${FLAKY_ONCE}/child`, []),
+      [FLAKY_ALWAYS]: singlePage(FLAKY_ALWAYS, ["Child"]),
+    },
+    { [FLAKY_ONCE]: flakyOnceState, [FLAKY_ALWAYS]: alwaysFailState },
+  );
+
+  const tree = await listFolderTree("");
+
+  const recoveredNode = findFolderNode(tree, FLAKY_ONCE);
+  assertTrue("Scenario 7a: folder that failed once then succeeded has no error", !recoveredNode?.error);
+  assertEqual("Scenario 7a: recovered folder still has its child", recoveredNode?.children.length, 1);
+
+  const alwaysFailedNode = findFolderNode(tree, FLAKY_ALWAYS);
+  assertTrue("Scenario 7b: folder that never recovers shows an error", Boolean(alwaysFailedNode?.error));
+  assertEqual("Scenario 7b: error carries the HTTP status for diagnostics", alwaysFailedNode?.errorStatus, 429);
+  assertTrue(
+    "Scenario 7b: error carries a Dropbox error_summary for diagnostics",
+    Boolean(alwaysFailedNode?.errorSummary),
+  );
+  assertEqual("Scenario 7b: failed folder has no children (fetch never succeeded)", alwaysFailedNode?.children.length, 0);
+
+  // Now simulate the user clicking "Retry" on that node: the underlying
+  // problem clears, and the per-node retry (not a whole-tree rebuild)
+  // should bring it back clean.
+  alwaysFailState.failTimes = 0;
+  const retried = await refreshFolderNode(FLAKY_ALWAYS, alwaysFailedNode!.name, alwaysFailedNode!.pathDisplay, 3);
+  assertTrue("Scenario 7b: after clearing the failure, per-node retry succeeds with no error", !retried.error);
+  assertEqual("Scenario 7b: retried node now has its child folder", retried.children.length, 1);
 }
 
 // ---------------------------------------------------------------------------

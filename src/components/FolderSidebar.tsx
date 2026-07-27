@@ -6,10 +6,14 @@ interface FolderSidebarProps {
   treeLoading: boolean;
   currentPath: string;
   expandedPaths: Set<string>;
+  /** Paths currently being re-crawled via a node's own "Retry" (see onRetryNode). */
+  retryingPaths: Set<string>;
   onToggleExpand: (path: string) => void;
   onNavigate: (path: string) => void;
-  /** Rebuilds the folder tree from scratch — offered when a limit/error cut discovery short. */
+  /** Rebuilds the whole folder tree from scratch. */
   onRetry: () => void;
+  /** Re-crawls just one failed folder's subtree in place. */
+  onRetryNode: (path: string) => void;
 }
 
 /** True if any node in the tree hit maxDepth/maxFolders or failed to list. */
@@ -23,20 +27,25 @@ function FolderTreeRow({
   depth,
   currentPath,
   expandedPaths,
+  retryingPaths,
   onToggleExpand,
   onNavigate,
+  onRetryNode,
 }: {
   node: FolderTreeNode;
   depth: number;
   currentPath: string;
   expandedPaths: Set<string>;
+  retryingPaths: Set<string>;
   onToggleExpand: (path: string) => void;
   onNavigate: (path: string) => void;
+  onRetryNode: (path: string) => void;
 }) {
   const isRoot = depth === 0;
   const hasChildren = node.children.length > 0;
   const isExpanded = expandedPaths.has(node.pathLower);
   const isActive = node.pathLower === currentPath;
+  const isRetrying = retryingPaths.has(node.pathLower);
 
   return (
     <div>
@@ -73,14 +82,28 @@ function FolderTreeRow({
             <Folder size={15} className="shrink-0 fill-gold-300/70 text-gold-500" />
           )}
           <span className="truncate">{node.name}</span>
-          {node.error ? (
-            <AlertTriangle size={11} className="ml-auto shrink-0 text-rose-500" aria-label={node.error} />
-          ) : node.isPartial ? (
-            <span className="ml-auto shrink-0 text-[10px] leading-none text-ink-400" title="More subfolders not shown">
+          {!node.error && node.isPartial ? (
+            <span className="ml-auto shrink-0 text-[10px] leading-none text-ink-400" title="Folder limit reached — some subfolders here weren't discovered">
               +
             </span>
           ) : null}
         </button>
+        {node.error && (
+          <>
+            <AlertTriangle size={11} className="shrink-0 text-rose-500" aria-label={node.error} />
+            <button
+              type="button"
+              onClick={() => onRetryNode(node.pathLower)}
+              disabled={isRetrying}
+              aria-label={`Retry loading ${node.name}`}
+              title={node.error}
+              className="flex shrink-0 items-center gap-0.5 rounded px-1 text-[10px] font-medium text-rose-600 underline hover:no-underline disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RefreshCw size={10} className={isRetrying ? "animate-spin" : undefined} />
+              Retry
+            </button>
+          </>
+        )}
       </div>
       {hasChildren && isExpanded && (
         <div>
@@ -91,8 +114,10 @@ function FolderTreeRow({
               depth={depth + 1}
               currentPath={currentPath}
               expandedPaths={expandedPaths}
+              retryingPaths={retryingPaths}
               onToggleExpand={onToggleExpand}
               onNavigate={onNavigate}
+              onRetryNode={onRetryNode}
             />
           ))}
         </div>
@@ -111,9 +136,11 @@ export default function FolderSidebar({
   treeLoading,
   currentPath,
   expandedPaths,
+  retryingPaths,
   onToggleExpand,
   onNavigate,
   onRetry,
+  onRetryNode,
 }: FolderSidebarProps) {
   const showPartialWarning = !treeLoading && tree !== null && treeHasPartialOrError(tree);
 
@@ -141,8 +168,10 @@ export default function FolderSidebar({
           depth={0}
           currentPath={currentPath}
           expandedPaths={expandedPaths}
+          retryingPaths={retryingPaths}
           onToggleExpand={onToggleExpand}
           onNavigate={onNavigate}
+          onRetryNode={onRetryNode}
         />
       )}
       {treeLoading && (

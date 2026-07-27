@@ -49,15 +49,22 @@ export type DropboxErrorKind =
   | "invalid_token"
   | "path_not_found"
   | "access_denied"
+  | "rate_limited"
   | "network"
   | "unknown";
 
 export class DropboxServiceError extends Error {
   kind: DropboxErrorKind;
-  constructor(message: string, kind: DropboxErrorKind) {
+  /** Raw HTTP status, when this came from an API response — debug/diagnostics only. */
+  status?: number;
+  /** Dropbox's own `error_summary` string, when present — debug/diagnostics only, never a token/header. */
+  summary?: string;
+  constructor(message: string, kind: DropboxErrorKind, details?: { status?: number; summary?: string }) {
     super(message);
     this.name = "DropboxServiceError";
     this.kind = kind;
+    this.status = details?.status;
+    this.summary = details?.summary;
   }
 }
 

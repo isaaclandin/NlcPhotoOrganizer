@@ -77,6 +77,12 @@ export interface FolderDebugInfo {
   treeLoading: boolean;
   limitHit: boolean;
   nodeError: string | null;
+  /** Dropbox's own `error_summary` behind nodeError, if available. */
+  apiErrorSummary: string | null;
+  /** Raw HTTP status behind nodeError, if available. */
+  httpStatus: number | null;
+  /** Whether a listFolder call was actually attempted for this node (false if the crawl never reached it, e.g. maxDepth). */
+  fetchAttempted: boolean;
   /** Size of the sidebar's expandedPaths set — should stay small (root + a
    * few ancestor chains), not track every folder the recursive crawl found. */
   expandedPathCount: number;
@@ -96,6 +102,10 @@ interface PhotoBrowserViewProps {
   isRoot: boolean;
   /** True if the current folder contains subfolders — distinguishes "no photos here yet, keep browsing" from "genuinely empty." */
   hasSubfolders: boolean;
+  /** Set if the sidebar tree failed to discover this folder's children (distinct from "no direct photos") — drives the "Could not load subfolders" empty state. */
+  subfoldersError: string | null;
+  retryingSubfolders: boolean;
+  onRetrySubfolders: () => void;
   debugInfo: FolderDebugInfo;
   /** Non-blocking notice shown once if the saved startup folder couldn't be opened. */
   startupWarning: string | null;
@@ -120,6 +130,9 @@ export default function PhotoBrowserView({
   error,
   isRoot,
   hasSubfolders,
+  subfoldersError,
+  retryingSubfolders,
+  onRetrySubfolders,
   debugInfo,
   startupWarning,
   onDismissStartupWarning,
@@ -277,6 +290,7 @@ export default function PhotoBrowserView({
           <span>hasDirectImages={String(debugInfo.hasDirectImages)}</span>
           <span>hasChildFolders={String(debugInfo.hasChildFolders)}</span>
           <span>treeLoading={String(debugInfo.treeLoading)}</span>
+          <span>fetchAttempted={String(debugInfo.fetchAttempted)}</span>
           <span className={debugInfo.limitHit ? "font-semibold text-gold-600" : undefined}>
             limitHit={String(debugInfo.limitHit)}
           </span>
@@ -286,6 +300,12 @@ export default function PhotoBrowserView({
           <span className={debugInfo.allExpanded ? "font-semibold text-rose-600" : undefined}>
             allExpanded={String(debugInfo.allExpanded)}
           </span>
+          {debugInfo.httpStatus !== null && (
+            <span className="font-semibold text-rose-600">httpStatus={debugInfo.httpStatus}</span>
+          )}
+          {debugInfo.apiErrorSummary && (
+            <span className="font-semibold text-rose-600">apiError={debugInfo.apiErrorSummary}</span>
+          )}
           {debugInfo.nodeError && <span className="font-semibold text-rose-600">error={debugInfo.nodeError}</span>}
         </div>
       )}
@@ -310,6 +330,15 @@ export default function PhotoBrowserView({
                 : undefined
           }
           onSecondary={CREDENTIAL_ERROR_KINDS.includes(error.kind) ? onGoToSettings : onGoToRoot}
+        />
+      ) : files.length === 0 && subfoldersError ? (
+        <DropboxStatePanel
+          icon={AlertTriangle}
+          tone="error"
+          heading="Could not load subfolders for this folder"
+          message={subfoldersError}
+          primaryLabel={retryingSubfolders ? "Retrying…" : "Retry"}
+          onPrimary={onRetrySubfolders}
         />
       ) : files.length === 0 && isRoot ? (
         <DropboxStatePanel

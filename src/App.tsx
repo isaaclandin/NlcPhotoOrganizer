@@ -23,6 +23,8 @@ import {
   listFolderTree,
   collectFolderPaths,
   findFolderNode,
+  refreshFolderNode,
+  replaceNodeInTree,
   getThumbnails,
   renameFiles,
   DropboxServiceError,
@@ -87,6 +89,8 @@ export default function App() {
   const [folderTree, setFolderTree] = useState<FolderTreeNode | null>(null);
   const [folderTreeLoading, setFolderTreeLoading] = useState(false);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set([""]));
+  /** Paths currently being re-crawled via the sidebar's per-node "Retry" — separate from folderTreeLoading (a whole-tree rebuild). */
+  const [retryingFolderPaths, setRetryingFolderPaths] = useState<Set<string>>(new Set());
   const folderTreeAbortRef = useRef<AbortController | null>(null);
 
   const [renaming, setRenaming] = useState(false);
@@ -138,6 +142,9 @@ export default function App() {
     treeLoading: folderTreeLoading,
     limitHit: selectedFolderNode?.isPartial ?? false,
     nodeError: selectedFolderNode?.error ?? null,
+    apiErrorSummary: selectedFolderNode?.errorSummary ?? null,
+    httpStatus: selectedFolderNode?.errorStatus ?? null,
+    fetchAttempted: selectedFolderNode?.fetchAttempted ?? false,
     expandedPathCount: expandedPaths.size,
     totalFolderCount: allDiscoveredFolderPaths.length,
     allExpanded:
@@ -161,6 +168,32 @@ export default function App() {
       setFolderTree(tree);
       setFolderTreeLoading(false);
     });
+  };
+
+  /**
+   * Re-crawls just one failed folder's subtree (e.g. after a transient
+   * 429/5xx during the original crawl) and patches the result back into
+   * `folderTree` in place — doesn't touch `expandedPaths`, `dropboxPath`, or
+   * require reconnecting Dropbox. Backs both the sidebar's per-node retry
+   * icon and the main panel's "Could not load subfolders" retry button.
+   */
+  const retryFolderNode = async (path: string) => {
+    if (!folderTree || retryingFolderPaths.has(path)) return;
+    const node = findFolderNode(folderTree, path);
+    if (!node) return;
+
+    setRetryingFolderPaths((prev) => new Set(prev).add(path));
+    try {
+      const depth = ancestorDropboxPaths(path).length - 1;
+      const refreshed = await refreshFolderNode(path, node.name, node.pathDisplay, depth);
+      setFolderTree((prev) => (prev ? replaceNodeInTree(prev, path, refreshed) : prev));
+    } finally {
+      setRetryingFolderPaths((prev) => {
+        const next = new Set(prev);
+        next.delete(path);
+        return next;
+      });
+    }
   };
 
   const toggleExpandPath = (path: string) => {
@@ -694,12 +727,14 @@ export default function App() {
             treeLoading={folderTreeLoading}
             currentPath={dropboxPath}
             expandedPaths={expandedPaths}
+            retryingPaths={retryingFolderPaths}
             onToggleExpand={toggleExpandPath}
             onNavigate={(path) => {
               setView("browser");
               loadDropboxFolder(path);
             }}
             onRetry={buildFolderTree}
+            onRetryNode={retryFolderNode}
           />
         )
       }
@@ -768,6 +803,9 @@ export default function App() {
           error={dropboxError}
           isRoot={dropboxPath === ""}
           hasSubfolders={dropboxHasSubfolders}
+          subfoldersError={selectedFolderNode?.error ?? null}
+          retryingSubfolders={retryingFolderPaths.has(dropboxPath)}
+          onRetrySubfolders={() => retryFolderNode(dropboxPath)}
           debugInfo={folderDebugInfo}
           startupWarning={startupWarning}
           onDismissStartupWarning={() => setStartupWarning(null)}

@@ -126,9 +126,25 @@ async function safeFetch(makeRequest: () => Promise<Response>): Promise<Response
   }
 }
 
+function isTransientStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Extra attempts after the first, for a response that looked transient (429/5xx). */
+const TRANSIENT_RETRY_ATTEMPTS = 2;
+const TRANSIENT_RETRY_BASE_DELAY_MS = 400;
+
 /**
- * Runs an authenticated Dropbox API call, refreshing and retrying exactly
- * once if the access token turns out to be expired/invalid (HTTP 401).
+ * Runs an authenticated Dropbox API call:
+ * - refreshes and retries once if the access token was expired/invalid (401)
+ * - retries a couple more times, with a short backoff, on a transient
+ *   failure (429 rate-limited or 5xx) — a single blip during a wide
+ *   recursive folder-tree crawl shouldn't permanently mark a folder broken.
+ *   Honors Dropbox's `Retry-After` header on 429s when present.
  */
 async function callWithTokenRetry(makeRequest: (accessToken: string) => Promise<Response>): Promise<Response> {
   const token = await refreshAccessToken();
@@ -138,6 +154,19 @@ async function callWithTokenRetry(makeRequest: (accessToken: string) => Promise<
     invalidateCachedAccessToken();
     const freshToken = await refreshAccessToken();
     response = await safeFetch(() => makeRequest(freshToken));
+  }
+
+  let attempt = 0;
+  while (isTransientStatus(response.status) && attempt < TRANSIENT_RETRY_ATTEMPTS) {
+    attempt += 1;
+    const retryAfterHeader = response.headers.get("Retry-After");
+    const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : NaN;
+    const backoffMs = Number.isFinite(retryAfterMs) && retryAfterMs > 0
+      ? retryAfterMs
+      : TRANSIENT_RETRY_BASE_DELAY_MS * attempt;
+    await delay(backoffMs);
+    const currentToken = await refreshAccessToken();
+    response = await safeFetch(() => makeRequest(currentToken));
   }
 
   return response;
@@ -162,18 +191,26 @@ async function throwIfApiError(response: Response): Promise<void> {
     throw new DropboxServiceError(
       "Dropbox rejected the access token. Try testing the connection again in Settings.",
       "invalid_token",
+      { status: response.status },
     );
   }
 
   const summary = await parseApiErrorSummary(response);
+  const details = { status: response.status, summary: summary || undefined };
 
+  if (response.status === 429) {
+    throw new DropboxServiceError("Dropbox is rate-limiting requests right now. Please try again shortly.", "rate_limited", details);
+  }
   if (summary.includes("not_found")) {
-    throw new DropboxServiceError("That Dropbox folder could not be found.", "path_not_found");
+    throw new DropboxServiceError("That Dropbox folder could not be found.", "path_not_found", details);
   }
   if (summary.includes("no_permission") || summary.includes("disallowed_name") || response.status === 403) {
-    throw new DropboxServiceError("You don't have access to that Dropbox folder.", "access_denied");
+    throw new DropboxServiceError("You don't have access to that Dropbox folder.", "access_denied", details);
   }
-  throw new DropboxServiceError("Dropbox returned an unexpected error. Please try again.", "unknown");
+  if (response.status >= 500) {
+    throw new DropboxServiceError("Dropbox had a temporary problem. Please try again.", "unknown", details);
+  }
+  throw new DropboxServiceError("Dropbox returned an unexpected error. Please try again.", "unknown", details);
 }
 
 interface RawListFolderResponse {
@@ -398,92 +435,168 @@ export async function getThumbnails(
 
 const DEFAULT_MAX_DEPTH = 10;
 const DEFAULT_MAX_FOLDERS = 5000;
+/** Max concurrent listFolder calls across one crawl — a wide/deep tree
+ * firing every level's requests unbounded is what actually triggers
+ * Dropbox rate-limiting (429) partway down, not a real per-folder problem. */
+const DEFAULT_TREE_CONCURRENCY = 4;
 
 export interface ListFolderTreeOptions {
   maxDepth?: number;
   maxFolders?: number;
+  concurrency?: number;
   signal?: AbortSignal;
 }
 
 /**
- * Recursively builds a folder-only tree for the sidebar, starting at
- * `rootPath` ("" = Dropbox root). Reuses `listFolder` (so it inherits the
- * same auth-retry behavior) and simply discards the file entries it
+ * Simple FIFO concurrency gate: runs at most `limit` of the promises
+ * produced by `withLimit(fn)` at once, queueing the rest. No external
+ * dependency needed for this — just a counter and a queue.
+ */
+function createConcurrencyLimiter(limit: number) {
+  let active = 0;
+  const queue: (() => void)[] = [];
+
+  function runNext() {
+    if (active >= limit || queue.length === 0) return;
+    active += 1;
+    const task = queue.shift();
+    task?.();
+  }
+
+  return function withLimit<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      queue.push(() => {
+        fn()
+          .then(resolve, reject)
+          .finally(() => {
+            active -= 1;
+            runNext();
+          });
+      });
+      runNext();
+    });
+  };
+}
+
+interface TreeCrawlContext {
+  maxDepth: number;
+  maxFolders: number;
+  signal?: AbortSignal;
+  limitFolderFetch: <T>(fn: () => Promise<T>) => Promise<T>;
+  /** Shared mutable counter across the whole crawl (all branches), not per-branch. */
+  folderCount: { value: number };
+}
+
+function createTreeCrawlContext(options: ListFolderTreeOptions): TreeCrawlContext {
+  return {
+    maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
+    maxFolders: options.maxFolders ?? DEFAULT_MAX_FOLDERS,
+    signal: options.signal,
+    limitFolderFetch: createConcurrencyLimiter(options.concurrency ?? DEFAULT_TREE_CONCURRENCY),
+    folderCount: { value: 0 },
+  };
+}
+
+/**
+ * Recursively builds a folder-only tree node (and its subtree), starting at
+ * `path`. Reuses `listFolder` (so it inherits the same auth-retry and
+ * transient-429/5xx-retry behavior) and simply discards the file entries it
  * returns — Dropbox's API has no "folders only" server-side filter, so this
  * is the only practical way to do it without a different, heavier endpoint.
  *
- * Siblings are fetched in parallel (one batch of concurrent requests per
- * tree level) rather than strictly sequentially, so a real account's tree
- * builds in a reasonable time instead of one folder at a time.
+ * Folder fetches go through `ctx.limitFolderFetch` (see
+ * DEFAULT_TREE_CONCURRENCY) rather than firing every level unbounded, so a
+ * wide/deep tree doesn't burst past Dropbox's rate limit partway down.
  *
- * Never throws: a folder that fails to list gets `error` set on its own
- * node (including the root, e.g. for missing/invalid credentials) and the
- * rest of the tree is unaffected. `maxDepth`/`maxFolders` stop the crawl
- * gracefully and mark the node where the cutoff happened as `isPartial`.
+ * Never throws: a folder that fails to list gets `error` (+ `errorStatus`/
+ * `errorSummary` for diagnostics) set on its own node and the rest of the
+ * tree is unaffected. `maxDepth`/`maxFolders` stop the crawl gracefully and
+ * mark the node where the cutoff happened as `isPartial` — a distinct state
+ * from `error`, surfaced differently in the UI.
  */
+async function buildFolderTreeNode(
+  path: string,
+  name: string,
+  pathDisplay: string,
+  depth: number,
+  ctx: TreeCrawlContext,
+): Promise<FolderTreeNode> {
+  const node: FolderTreeNode = { name, pathDisplay, pathLower: path, children: [] };
+
+  if (ctx.signal?.aborted) return node;
+
+  if (depth >= ctx.maxDepth) {
+    node.isPartial = true;
+    return node;
+  }
+
+  let result: DropboxListFolderResult;
+  node.fetchAttempted = true;
+  try {
+    result = await ctx.limitFolderFetch(() => listFolder(path));
+  } catch (err) {
+    if (err instanceof DropboxServiceError) {
+      node.error = err.message;
+      node.errorStatus = err.status;
+      node.errorSummary = err.summary;
+    } else {
+      node.error = "Couldn't load this folder.";
+    }
+    return node;
+  }
+
+  if (ctx.signal?.aborted) return node;
+
+  // Debug-display only (see FolderTreeNode.directImageCount) — computed
+  // alongside the folder filter below but never fed back into it; folder
+  // discovery/recursion must stay completely blind to image counts.
+  node.directImageCount = result.entries.filter(
+    (e): e is DropboxFileItem => e.type === "file" && e.isImage,
+  ).length;
+
+  const childFolders = result.entries
+    .filter((e): e is DropboxFolderItem => e.type === "folder")
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+
+  const toVisit: DropboxFolderItem[] = [];
+  for (const folder of childFolders) {
+    if (ctx.folderCount.value >= ctx.maxFolders) {
+      node.isPartial = true;
+      break;
+    }
+    ctx.folderCount.value += 1;
+    toVisit.push(folder);
+  }
+
+  node.children = await Promise.all(
+    toVisit.map((folder) => buildFolderTreeNode(folder.pathLower, folder.name, folder.pathDisplay, depth + 1, ctx)),
+  );
+
+  return node;
+}
+
 export async function listFolderTree(
   rootPath: string = "",
   options: ListFolderTreeOptions = {},
 ): Promise<FolderTreeNode> {
-  const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
-  const maxFolders = options.maxFolders ?? DEFAULT_MAX_FOLDERS;
-  const signal = options.signal;
-  let folderCount = 0;
+  return buildFolderTreeNode(rootPath, "Dropbox", rootPath, 0, createTreeCrawlContext(options));
+}
 
-  async function buildNode(
-    path: string,
-    name: string,
-    pathDisplay: string,
-    depth: number,
-  ): Promise<FolderTreeNode> {
-    const node: FolderTreeNode = { name, pathDisplay, pathLower: path, children: [] };
-
-    if (signal?.aborted) return node;
-
-    if (depth >= maxDepth) {
-      node.isPartial = true;
-      return node;
-    }
-
-    let result: DropboxListFolderResult;
-    try {
-      result = await listFolder(path);
-    } catch (err) {
-      node.error = err instanceof DropboxServiceError ? err.message : "Couldn't load this folder.";
-      return node;
-    }
-
-    if (signal?.aborted) return node;
-
-    // Debug-display only (see FolderTreeNode.directImageCount) — computed
-    // alongside the folder filter below but never fed back into it; folder
-    // discovery/recursion must stay completely blind to image counts.
-    node.directImageCount = result.entries.filter(
-      (e): e is DropboxFileItem => e.type === "file" && e.isImage,
-    ).length;
-
-    const childFolders = result.entries
-      .filter((e): e is DropboxFolderItem => e.type === "folder")
-      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-
-    const toVisit: DropboxFolderItem[] = [];
-    for (const folder of childFolders) {
-      if (folderCount >= maxFolders) {
-        node.isPartial = true;
-        break;
-      }
-      folderCount += 1;
-      toVisit.push(folder);
-    }
-
-    node.children = await Promise.all(
-      toVisit.map((folder) => buildNode(folder.pathLower, folder.name, folder.pathDisplay, depth + 1)),
-    );
-
-    return node;
-  }
-
-  return buildNode(rootPath, "Dropbox", rootPath, 0);
+/**
+ * Re-crawls a single folder and its subtree — a fresh, independent
+ * maxFolders/concurrency budget, not the original crawl's. Backs the
+ * sidebar's per-node "Retry" action so one failed branch (e.g. hit a
+ * transient error) can be retried without rebuilding or re-rate-limiting
+ * the whole tree.
+ */
+export async function refreshFolderNode(
+  path: string,
+  name: string,
+  pathDisplay: string,
+  depth: number,
+  options: ListFolderTreeOptions = {},
+): Promise<FolderTreeNode> {
+  return buildFolderTreeNode(path, name, pathDisplay, depth, createTreeCrawlContext(options));
 }
 
 /**
@@ -509,6 +622,26 @@ export function findFolderNode(node: FolderTreeNode, path: string): FolderTreeNo
     if (found) return found;
   }
   return null;
+}
+
+/**
+ * Returns a new tree with the node at `path` swapped for `replacement`
+ * (immutable — safe to hand straight to React state). Returns `tree`
+ * unchanged (same reference) if `path` isn't found anywhere in it, so
+ * callers can tell whether the swap actually happened.
+ */
+export function replaceNodeInTree(tree: FolderTreeNode, path: string, replacement: FolderTreeNode): FolderTreeNode {
+  if (tree.pathLower === path) return replacement;
+  if (tree.children.length === 0) return tree;
+
+  let changed = false;
+  const children = tree.children.map((child) => {
+    const next = replaceNodeInTree(child, path, replacement);
+    if (next !== child) changed = true;
+    return next;
+  });
+
+  return changed ? { ...tree, children } : tree;
 }
 
 // ---------------------------------------------------------------------------
