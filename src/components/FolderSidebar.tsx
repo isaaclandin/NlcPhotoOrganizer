@@ -1,4 +1,4 @@
-import { ChevronRight, ChevronDown, Folder, Box, Loader2, AlertTriangle } from "lucide-react";
+import { ChevronRight, ChevronDown, Folder, Box, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
 import type { FolderTreeNode } from "../services/dropboxTypes";
 
 interface FolderSidebarProps {
@@ -8,6 +8,14 @@ interface FolderSidebarProps {
   expandedPaths: Set<string>;
   onToggleExpand: (path: string) => void;
   onNavigate: (path: string) => void;
+  /** Rebuilds the folder tree from scratch — offered when a limit/error cut discovery short. */
+  onRetry: () => void;
+}
+
+/** True if any node in the tree hit maxDepth/maxFolders or failed to list. */
+function treeHasPartialOrError(node: FolderTreeNode): boolean {
+  if (node.isPartial || node.error) return true;
+  return node.children.some(treeHasPartialOrError);
 }
 
 function FolderTreeRow({
@@ -105,9 +113,28 @@ export default function FolderSidebar({
   expandedPaths,
   onToggleExpand,
   onNavigate,
+  onRetry,
 }: FolderSidebarProps) {
+  const showPartialWarning = !treeLoading && tree !== null && treeHasPartialOrError(tree);
+
   return (
     <nav className="flex flex-col gap-0.5 px-2">
+      {showPartialWarning && (
+        <div className="mb-1 flex items-start gap-1.5 rounded-lg border border-gold-400/50 bg-gold-300/20 px-2.5 py-2 text-xs text-gold-600">
+          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+          <span className="min-w-0 flex-1">
+            Some folders may not have fully loaded.
+            <button
+              type="button"
+              onClick={onRetry}
+              className="ml-1 inline-flex items-center gap-1 font-medium underline hover:no-underline"
+            >
+              <RefreshCw size={11} />
+              Retry
+            </button>
+          </span>
+        </div>
+      )}
       {tree && (
         <FolderTreeRow
           node={tree}

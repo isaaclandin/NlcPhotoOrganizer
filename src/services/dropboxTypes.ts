@@ -37,4 +37,11 @@ export interface FolderTreeNode {
   isPartial?: boolean;
   /** Set if listing this node's children failed; the rest of the tree is unaffected. */
   error?: string;
+  /**
+   * Count of supported-image files directly inside this folder — for the
+   * debug panel only. Never used to decide whether the node exists, is
+   * rendered, or is recursed into; folder discovery is image-count-blind by
+   * design (see listFolderTree in dropboxService.ts).
+   */
+  directImageCount?: number;
 }

@@ -455,6 +455,13 @@ export async function listFolderTree(
 
     if (signal?.aborted) return node;
 
+    // Debug-display only (see FolderTreeNode.directImageCount) — computed
+    // alongside the folder filter below but never fed back into it; folder
+    // discovery/recursion must stay completely blind to image counts.
+    node.directImageCount = result.entries.filter(
+      (e): e is DropboxFileItem => e.type === "file" && e.isImage,
+    ).length;
+
     const childFolders = result.entries
       .filter((e): e is DropboxFolderItem => e.type === "folder")
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
@@ -492,6 +499,16 @@ export function collectFolderPaths(node: FolderTreeNode, out: string[] = []): st
     collectFolderPaths(child, out);
   }
   return out;
+}
+
+/** Finds the node for `path` within a tree built by listFolderTree, or null if not (yet) discovered. */
+export function findFolderNode(node: FolderTreeNode, path: string): FolderTreeNode | null {
+  if (node.pathLower === path) return node;
+  for (const child of node.children) {
+    const found = findFolderNode(child, path);
+    if (found) return found;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------

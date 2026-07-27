@@ -25,14 +25,14 @@ try {
       {
         // Only isSupportedImageFile/rawExtensionOf/buildPreviewFilename are
         // exercised here (all pure functions); dropboxService.ts imports
-        // settingsRepository -> db.ts, which has Vite-only `?url`/wasm
-        // imports esbuild can't resolve standalone. Redirect that one
-        // import to a stub — its exports are never called by the code
-        // under test.
-        name: "stub-settings-repository",
+        // dropboxAuth -> dropboxAuthRepository -> db.ts, which has
+        // Vite-only `?url`/wasm imports esbuild can't resolve standalone.
+        // Redirect that one import to a stub — its exports are never
+        // called by the code under test.
+        name: "stub-dropbox-auth-repository",
         setup(pluginBuild) {
-          pluginBuild.onResolve({ filter: /^\.\/settingsRepository$/ }, () => ({
-            path: path.join(repoRoot, "scripts/stubs/settingsRepository.ts"),
+          pluginBuild.onResolve({ filter: /^\.\/dropboxAuthRepository$/ }, () => ({
+            path: path.join(repoRoot, "scripts/stubs/dropboxAuthRepository.ts"),
           }));
         },
       },

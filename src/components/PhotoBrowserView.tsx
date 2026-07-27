@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   CheckSquare,
   Square,
@@ -23,6 +23,7 @@ import {
   ImageOff,
   FolderSearch,
   X,
+  Bug,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import PhotoGrid from "./PhotoGrid";
@@ -62,6 +63,22 @@ const CREDENTIAL_ERROR_KINDS: DropboxErrorKind[] = [
   "invalid_token",
 ];
 
+/**
+ * Safe-to-display folder-tree diagnostics for live troubleshooting (e.g. on
+ * a deployed site, without devtools) — contains only path/count/boolean
+ * info, never tokens, headers, or raw API payloads.
+ */
+export interface FolderDebugInfo {
+  path: string;
+  depth: number;
+  childFolderCount: number;
+  hasDirectImages: boolean;
+  hasChildFolders: boolean;
+  treeLoading: boolean;
+  limitHit: boolean;
+  nodeError: string | null;
+}
+
 interface PhotoBrowserViewProps {
   files: DropboxFileItem[];
   thumbnails: ThumbnailResultMap;
@@ -72,6 +89,7 @@ interface PhotoBrowserViewProps {
   isRoot: boolean;
   /** True if the current folder contains subfolders — distinguishes "no photos here yet, keep browsing" from "genuinely empty." */
   hasSubfolders: boolean;
+  debugInfo: FolderDebugInfo;
   /** Non-blocking notice shown once if the saved startup folder couldn't be opened. */
   startupWarning: string | null;
   onDismissStartupWarning: () => void;
@@ -95,6 +113,7 @@ export default function PhotoBrowserView({
   error,
   isRoot,
   hasSubfolders,
+  debugInfo,
   startupWarning,
   onDismissStartupWarning,
   selectedIds,
@@ -108,6 +127,7 @@ export default function PhotoBrowserView({
   onRetry,
   onGoToRoot,
 }: PhotoBrowserViewProps) {
+  const [showDebug, setShowDebug] = useState(false);
   const allSelected = files.length > 0 && selectedIds.size === files.length;
   const noneSelected = selectedIds.size === 0;
 
@@ -223,8 +243,39 @@ export default function PhotoBrowserView({
               <List size={16} />
             </button>
           </div>
+
+          <button
+            type="button"
+            onClick={() => setShowDebug((v) => !v)}
+            aria-label="Toggle folder debug info"
+            aria-pressed={showDebug}
+            className={`flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
+              showDebug
+                ? "border-forest-700/40 bg-forest-600 text-cream-50"
+                : "border-beige-300 bg-cream-50 text-ink-400 hover:text-ink-700"
+            }`}
+          >
+            <Bug size={15} />
+          </button>
         </div>
       </div>
+
+      {showDebug && (
+        <div className="mx-6 mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-beige-300/70 bg-beige-100 px-3.5 py-2 font-mono text-[11px] text-ink-600">
+          <span>
+            path=<span className="text-forest-700">{debugInfo.path}</span>
+          </span>
+          <span>depth={debugInfo.depth}</span>
+          <span>childFolders={debugInfo.childFolderCount}</span>
+          <span>hasDirectImages={String(debugInfo.hasDirectImages)}</span>
+          <span>hasChildFolders={String(debugInfo.hasChildFolders)}</span>
+          <span>treeLoading={String(debugInfo.treeLoading)}</span>
+          <span className={debugInfo.limitHit ? "font-semibold text-gold-600" : undefined}>
+            limitHit={String(debugInfo.limitHit)}
+          </span>
+          {debugInfo.nodeError && <span className="font-semibold text-rose-600">error={debugInfo.nodeError}</span>}
+        </div>
+      )}
 
       {startupWarningBanner}
 

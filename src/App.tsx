@@ -6,7 +6,7 @@ import SettingsSidebar from "./components/SettingsSidebar";
 import type { SettingsSection } from "./components/SettingsSidebar";
 import PhotoBrowserView from "./components/PhotoBrowserView";
 import { getTagIcon } from "./components/PhotoBrowserView";
-import type { DropboxLoadError } from "./components/PhotoBrowserView";
+import type { DropboxLoadError, FolderDebugInfo } from "./components/PhotoBrowserView";
 import RenameActionBar from "./components/RenameActionBar";
 import type { TagOption, RenameProgress, RenameResult } from "./components/RenameActionBar";
 import RenameConfirmModal from "./components/RenameConfirmModal";
@@ -22,6 +22,7 @@ import {
   listFolder,
   listFolderTree,
   collectFolderPaths,
+  findFolderNode,
   getThumbnails,
   renameFiles,
   DropboxServiceError,
@@ -114,7 +115,26 @@ export default function App() {
   // recursive sidebar tree crawl, since this comes straight from the same
   // listFolder() call that already populated dropboxEntries. Used to tell
   // "no photos here, but keep browsing" apart from "genuinely empty."
-  const dropboxHasSubfolders = dropboxEntries.some((e) => e.type === "folder");
+  const dropboxChildFolderCount = dropboxEntries.filter((e) => e.type === "folder").length;
+  const dropboxHasSubfolders = dropboxChildFolderCount > 0;
+
+  // Production-safe folder-tree diagnostics (no tokens, no request bodies) —
+  // surfaced in the UI so nested-folder-discovery issues can be verified
+  // directly on a live deployment without needing devtools. childFolderCount
+  // / hasDirectImages come straight from the current folder's own listFolder
+  // result (always fresh); limitHit/nodeError reflect that same folder's
+  // node in the separately-crawled sidebar tree, if the crawl has reached it.
+  const selectedFolderNode = folderTree ? findFolderNode(folderTree, dropboxPath) : null;
+  const folderDebugInfo: FolderDebugInfo = {
+    path: dropboxPath || "/",
+    depth: ancestorDropboxPaths(dropboxPath).length - 1,
+    childFolderCount: dropboxChildFolderCount,
+    hasDirectImages: dropboxImageFiles.length > 0,
+    hasChildFolders: dropboxHasSubfolders,
+    treeLoading: folderTreeLoading,
+    limitHit: selectedFolderNode?.isPartial ?? false,
+    nodeError: selectedFolderNode?.error ?? null,
+  };
 
   const buildFolderTree = () => {
     folderTreeAbortRef.current?.abort();
@@ -675,6 +695,7 @@ export default function App() {
               setView("browser");
               loadDropboxFolder(path);
             }}
+            onRetry={buildFolderTree}
           />
         )
       }
@@ -743,6 +764,7 @@ export default function App() {
           error={dropboxError}
           isRoot={dropboxPath === ""}
           hasSubfolders={dropboxHasSubfolders}
+          debugInfo={folderDebugInfo}
           startupWarning={startupWarning}
           onDismissStartupWarning={() => setStartupWarning(null)}
           selectedIds={selectedIds}
