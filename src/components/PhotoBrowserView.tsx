@@ -77,6 +77,13 @@ export interface FolderDebugInfo {
   treeLoading: boolean;
   limitHit: boolean;
   nodeError: string | null;
+  /** Size of the sidebar's expandedPaths set — should stay small (root + a
+   * few ancestor chains), not track every folder the recursive crawl found. */
+  expandedPathCount: number;
+  /** Total folders discovered anywhere in the tree, for comparison against expandedPathCount. */
+  totalFolderCount: number;
+  /** True if every discovered folder is currently expanded — a red flag (the exact bug this panel exists to catch), not expected in normal use. */
+  allExpanded: boolean;
 }
 
 interface PhotoBrowserViewProps {
@@ -272,6 +279,12 @@ export default function PhotoBrowserView({
           <span>treeLoading={String(debugInfo.treeLoading)}</span>
           <span className={debugInfo.limitHit ? "font-semibold text-gold-600" : undefined}>
             limitHit={String(debugInfo.limitHit)}
+          </span>
+          <span>
+            expandedPaths={debugInfo.expandedPathCount}/{debugInfo.totalFolderCount}
+          </span>
+          <span className={debugInfo.allExpanded ? "font-semibold text-rose-600" : undefined}>
+            allExpanded={String(debugInfo.allExpanded)}
           </span>
           {debugInfo.nodeError && <span className="font-semibold text-rose-600">error={debugInfo.nodeError}</span>}
         </div>

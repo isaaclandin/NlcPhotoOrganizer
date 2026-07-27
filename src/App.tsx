@@ -125,6 +125,10 @@ export default function App() {
   // result (always fresh); limitHit/nodeError reflect that same folder's
   // node in the separately-crawled sidebar tree, if the crawl has reached it.
   const selectedFolderNode = folderTree ? findFolderNode(folderTree, dropboxPath) : null;
+  // Read-only check for the debug panel only — never fed back into
+  // setExpandedPaths. Confirms the sidebar isn't accidentally back to
+  // "everything expanded" (this is exactly the bug being guarded against).
+  const allDiscoveredFolderPaths = folderTree ? collectFolderPaths(folderTree) : [];
   const folderDebugInfo: FolderDebugInfo = {
     path: dropboxPath || "/",
     depth: ancestorDropboxPaths(dropboxPath).length - 1,
@@ -134,6 +138,10 @@ export default function App() {
     treeLoading: folderTreeLoading,
     limitHit: selectedFolderNode?.isPartial ?? false,
     nodeError: selectedFolderNode?.error ?? null,
+    expandedPathCount: expandedPaths.size,
+    totalFolderCount: allDiscoveredFolderPaths.length,
+    allExpanded:
+      allDiscoveredFolderPaths.length > 0 && allDiscoveredFolderPaths.every((p) => expandedPaths.has(p)),
   };
 
   const buildFolderTree = () => {
@@ -141,21 +149,17 @@ export default function App() {
     const controller = new AbortController();
     folderTreeAbortRef.current = controller;
     setFolderTreeLoading(true);
+    // Folder *discovery* is still fully recursive (listFolderTree crawls the
+    // whole tree up front), but the sidebar UI must not auto-expand
+    // everything it found — that made the tree unusably tall on a real
+    // account. expandedPaths is left untouched here: it already starts at
+    // root-only (see useState below) and otherwise only ever gains ancestor
+    // paths (loadDropboxFolder) or a single manually-toggled path
+    // (toggleExpandPath), never "every folder in the tree."
     listFolderTree("", { signal: controller.signal }).then((tree) => {
       if (controller.signal.aborted) return;
       setFolderTree(tree);
       setFolderTreeLoading(false);
-      // Auto-expand every folder the crawl found (this Dropbox isn't
-      // massive) so nested folders are visible immediately instead of
-      // requiring the user to manually click through each parent first.
-      // Merged onto whatever's already expanded, so a manual collapse made
-      // earlier in the session isn't clobbered by a later refresh picking
-      // up newly-created folders.
-      setExpandedPaths((prev) => {
-        const next = new Set(prev);
-        collectFolderPaths(tree).forEach((p) => next.add(p));
-        return next;
-      });
     });
   };
 
