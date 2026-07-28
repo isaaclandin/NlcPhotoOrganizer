@@ -440,61 +440,101 @@ const DEFAULT_MAX_FOLDERS = 5000;
  * Dropbox rate-limiting (429) partway down, not a real per-folder problem. */
 const DEFAULT_TREE_CONCURRENCY = 4;
 
+/** Fired every time a single node's own state changes (queued → loading →
+ * loaded/error) — the mechanism behind progressive rendering. Consumers
+ * merge each update into their own tree state as it arrives rather than
+ * waiting for the whole crawl to finish. */
+export type FolderNodeUpdate = (path: string, node: FolderTreeNode) => void;
+
+/** Lets a caller (e.g. "user clicked a folder that's still queued") bump
+ * that folder's own listFolder call to the front of the concurrency queue. */
+export interface FolderCrawlHandle {
+  prioritize: (path: string) => void;
+}
+
 export interface ListFolderTreeOptions {
   maxDepth?: number;
   maxFolders?: number;
   concurrency?: number;
   signal?: AbortSignal;
+  onNodeUpdate?: FolderNodeUpdate;
+  /** Fired synchronously, before any network call, with a handle for this crawl. */
+  onCrawlHandle?: (handle: FolderCrawlHandle) => void;
 }
 
 /**
  * Simple FIFO concurrency gate: runs at most `limit` of the promises
- * produced by `withLimit(fn)` at once, queueing the rest. No external
- * dependency needed for this — just a counter and a queue.
+ * produced by `withLimit(fn)` at once, queueing the rest. Queued-but-not-
+ * yet-started tasks can be bumped to the front via `prioritize(key)` — used
+ * so clicking a folder the crawl hasn't reached yet doesn't leave it stuck
+ * behind hundreds of other pending fetches. No external dependency needed
+ * for any of this — just a counter and an array.
  */
 function createConcurrencyLimiter(limit: number) {
   let active = 0;
-  const queue: (() => void)[] = [];
+  const queue: { key?: string; run: () => void }[] = [];
 
   function runNext() {
     if (active >= limit || queue.length === 0) return;
     active += 1;
     const task = queue.shift();
-    task?.();
+    task?.run();
   }
 
-  return function withLimit<T>(fn: () => Promise<T>): Promise<T> {
+  function withLimit<T>(fn: () => Promise<T>, key?: string): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-      queue.push(() => {
-        fn()
-          .then(resolve, reject)
-          .finally(() => {
-            active -= 1;
-            runNext();
-          });
+      queue.push({
+        key,
+        run: () => {
+          fn()
+            .then(resolve, reject)
+            .finally(() => {
+              active -= 1;
+              runNext();
+            });
+        },
       });
       runNext();
     });
-  };
+  }
+
+  function prioritize(key: string) {
+    const index = queue.findIndex((t) => t.key === key);
+    if (index > 0) {
+      const [task] = queue.splice(index, 1);
+      queue.unshift(task);
+    }
+  }
+
+  return { withLimit, prioritize };
 }
 
 interface TreeCrawlContext {
   maxDepth: number;
   maxFolders: number;
   signal?: AbortSignal;
-  limitFolderFetch: <T>(fn: () => Promise<T>) => Promise<T>;
+  limiter: ReturnType<typeof createConcurrencyLimiter>;
+  onNodeUpdate?: FolderNodeUpdate;
   /** Shared mutable counter across the whole crawl (all branches), not per-branch. */
   folderCount: { value: number };
 }
 
 function createTreeCrawlContext(options: ListFolderTreeOptions): TreeCrawlContext {
+  const limiter = createConcurrencyLimiter(options.concurrency ?? DEFAULT_TREE_CONCURRENCY);
+  options.onCrawlHandle?.({ prioritize: limiter.prioritize });
   return {
     maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
     maxFolders: options.maxFolders ?? DEFAULT_MAX_FOLDERS,
     signal: options.signal,
-    limitFolderFetch: createConcurrencyLimiter(options.concurrency ?? DEFAULT_TREE_CONCURRENCY),
+    limiter,
+    onNodeUpdate: options.onNodeUpdate,
     folderCount: { value: 0 },
   };
+}
+
+function emitNodeUpdate(ctx: TreeCrawlContext, node: FolderTreeNode): void {
+  if (ctx.signal?.aborted) return;
+  ctx.onNodeUpdate?.(node.pathLower, node);
 }
 
 /**
@@ -504,9 +544,17 @@ function createTreeCrawlContext(options: ListFolderTreeOptions): TreeCrawlContex
  * returns — Dropbox's API has no "folders only" server-side filter, so this
  * is the only practical way to do it without a different, heavier endpoint.
  *
- * Folder fetches go through `ctx.limitFolderFetch` (see
- * DEFAULT_TREE_CONCURRENCY) rather than firing every level unbounded, so a
- * wide/deep tree doesn't burst past Dropbox's rate limit partway down.
+ * Folder fetches go through `ctx.limiter` (see DEFAULT_TREE_CONCURRENCY)
+ * rather than firing every level unbounded, so a wide/deep tree doesn't
+ * burst past Dropbox's rate limit partway down.
+ *
+ * Progressive: calls `ctx.onNodeUpdate(path, node)` at every state
+ * transition (queued → loading → loaded/error) instead of only once at the
+ * very end, so a caller building live UI state (see App.tsx) can render
+ * each branch the moment it's known rather than waiting for all ~900
+ * requests. The returned promise still only resolves once this node *and*
+ * its full subtree are done, for callers that just want the final tree
+ * (e.g. tests, or "is the crawl finished").
  *
  * Never throws: a folder that fails to list gets `error` (+ `errorStatus`/
  * `errorSummary` for diagnostics) set on its own node and the rest of the
@@ -521,27 +569,39 @@ async function buildFolderTreeNode(
   depth: number,
   ctx: TreeCrawlContext,
 ): Promise<FolderTreeNode> {
-  const node: FolderTreeNode = { name, pathDisplay, pathLower: path, children: [] };
+  let node: FolderTreeNode = {
+    name,
+    pathDisplay,
+    pathLower: path,
+    children: [],
+    childrenStatus: "unknown",
+  };
 
   if (ctx.signal?.aborted) return node;
 
   if (depth >= ctx.maxDepth) {
-    node.isPartial = true;
+    // Deliberately not fetching — "loaded" (not "unknown"/"loading") so the
+    // UI doesn't show a perpetual spinner for a node we're never going to
+    // resolve further; `isPartial` is what actually flags the cutoff.
+    node = { ...node, isPartial: true, childrenStatus: "loaded" };
+    emitNodeUpdate(ctx, node);
     return node;
   }
 
+  node = { ...node, childrenStatus: "loading" };
+  emitNodeUpdate(ctx, node);
+
   let result: DropboxListFolderResult;
-  node.fetchAttempted = true;
+  node = { ...node, fetchAttempted: true };
   try {
-    result = await ctx.limitFolderFetch(() => listFolder(path));
+    result = await ctx.limiter.withLimit(() => listFolder(path), path);
   } catch (err) {
     if (err instanceof DropboxServiceError) {
-      node.error = err.message;
-      node.errorStatus = err.status;
-      node.errorSummary = err.summary;
+      node = { ...node, childrenStatus: "error", error: err.message, errorStatus: err.status, errorSummary: err.summary };
     } else {
-      node.error = "Couldn't load this folder.";
+      node = { ...node, childrenStatus: "error", error: "Couldn't load this folder." };
     }
+    emitNodeUpdate(ctx, node);
     return node;
   }
 
@@ -550,7 +610,7 @@ async function buildFolderTreeNode(
   // Debug-display only (see FolderTreeNode.directImageCount) — computed
   // alongside the folder filter below but never fed back into it; folder
   // discovery/recursion must stay completely blind to image counts.
-  node.directImageCount = result.entries.filter(
+  const directImageCount = result.entries.filter(
     (e): e is DropboxFileItem => e.type === "file" && e.isImage,
   ).length;
 
@@ -559,20 +619,46 @@ async function buildFolderTreeNode(
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 
   const toVisit: DropboxFolderItem[] = [];
+  let hitFolderLimit = false;
   for (const folder of childFolders) {
     if (ctx.folderCount.value >= ctx.maxFolders) {
-      node.isPartial = true;
+      hitFolderLimit = true;
       break;
     }
     ctx.folderCount.value += 1;
     toVisit.push(folder);
   }
 
-  node.children = await Promise.all(
+  // Stub each child in immediately (childrenStatus "unknown", not yet
+  // fetched) — this is what makes a folder's children *appear* in the
+  // sidebar as soon as this one listFolder call resolves, rather than
+  // waiting for every descendant to resolve too.
+  const stubChildren: FolderTreeNode[] = toVisit.map((folder) => ({
+    name: folder.name,
+    pathDisplay: folder.pathDisplay,
+    pathLower: folder.pathLower,
+    children: [],
+    childrenStatus: "unknown",
+  }));
+
+  node = {
+    ...node,
+    directImageCount,
+    childrenStatus: "loaded",
+    isPartial: hitFolderLimit || undefined,
+    children: stubChildren,
+  };
+  emitNodeUpdate(ctx, node);
+
+  // Recurse into each child. Each one manages and emits its own progress
+  // independently (via the same ctx.onNodeUpdate) — this call's own return
+  // value additionally waits for all of them so the promise this function
+  // returns still reflects true completion of the whole subtree.
+  const childNodes = await Promise.all(
     toVisit.map((folder) => buildFolderTreeNode(folder.pathLower, folder.name, folder.pathDisplay, depth + 1, ctx)),
   );
 
-  return node;
+  return { ...node, children: childNodes };
 }
 
 export async function listFolderTree(
@@ -642,6 +728,37 @@ export function replaceNodeInTree(tree: FolderTreeNode, path: string, replacemen
   });
 
   return changed ? { ...tree, children } : tree;
+}
+
+export interface FolderTreeStats {
+  /** Nodes whose own children are fully known ("loaded"). */
+  discoveredCount: number;
+  /** Nodes that exist (named by a parent) but aren't "loaded" yet — stubbed-in ("unknown") or actively fetching ("loading"). */
+  queuedCount: number;
+  /** Nodes whose fetch failed. */
+  errorCount: number;
+}
+
+/** Walks a tree built by listFolderTree and tallies node states — for the
+ * production-safe debug panel, not for any control-flow decision. */
+export function collectFolderTreeStats(node: FolderTreeNode, stats: FolderTreeStats = { discoveredCount: 0, queuedCount: 0, errorCount: 0 }): FolderTreeStats {
+  switch (node.childrenStatus) {
+    case "loaded":
+      stats.discoveredCount += 1;
+      break;
+    case "error":
+      stats.errorCount += 1;
+      break;
+    case "loading":
+    case "unknown":
+    default:
+      stats.queuedCount += 1;
+      break;
+  }
+  for (const child of node.children) {
+    collectFolderTreeStats(child, stats);
+  }
+  return stats;
 }
 
 // ---------------------------------------------------------------------------

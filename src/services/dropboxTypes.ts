@@ -27,12 +27,25 @@ export interface DropboxListFolderResult {
   entries: DropboxEntry[];
 }
 
+/**
+ * "unknown" = this folder is known to exist (its parent's listing named it)
+ * but its own children haven't been fetched yet — a stub, shown immediately
+ * so the folder is navigable/expandable while the crawl catches up to it.
+ * "loading" = its listFolder call is in flight right now.
+ * "loaded" = `children` is accurate and complete for this node (deeper
+ * descendants may still individually be "unknown"/"loading").
+ * "error" = the fetch failed; see `error`/`errorStatus`/`errorSummary`.
+ */
+export type FolderChildrenStatus = "unknown" | "loading" | "loaded" | "error";
+
 /** A folder-only node in the recursively-built sidebar tree. */
 export interface FolderTreeNode {
   name: string;
   pathDisplay: string;
   pathLower: string;
   children: FolderTreeNode[];
+  /** See FolderChildrenStatus. Undefined only for nodes built before this field existed (treat as "loaded"). */
+  childrenStatus?: FolderChildrenStatus;
   /** True if this node's children were cut off by maxDepth/maxFolders. */
   isPartial?: boolean;
   /** Set if listing this node's children failed; the rest of the tree is unaffected. */

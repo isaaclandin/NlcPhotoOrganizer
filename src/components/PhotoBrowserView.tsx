@@ -30,7 +30,7 @@ import PhotoGrid from "./PhotoGrid";
 import DropboxStatePanel from "./DropboxStatePanel";
 import type { DropboxErrorKind } from "../services/dropboxService";
 import type { ThumbnailResultMap } from "../services/dropboxService";
-import type { DropboxFileItem } from "../services/dropboxTypes";
+import type { DropboxFileItem, FolderChildrenStatus } from "../services/dropboxTypes";
 
 const KNOWN_TAG_ICONS: Record<string, LucideIcon> = {
   Animals: PawPrint,
@@ -90,6 +90,16 @@ export interface FolderDebugInfo {
   totalFolderCount: number;
   /** True if every discovered folder is currently expanded — a red flag (the exact bug this panel exists to catch), not expected in normal use. */
   allExpanded: boolean;
+  /** childrenStatus of the currently selected folder's own tree node — drives the "Loading subfolders…" empty state. */
+  selectedChildrenStatus: FolderChildrenStatus;
+  /** children.length of the currently selected folder's own tree node. */
+  selectedChildCount: number;
+  /** Folders tree-wide whose children are fully known ("loaded"). Progress indicator for the background crawl — not expected to equal totalFolderCount until the crawl finishes. */
+  discoveredCount: number;
+  /** Folders tree-wide still "unknown"/"loading" — shrinks toward 0 as the crawl progresses. */
+  queuedCount: number;
+  /** Folders tree-wide whose children fetch failed. */
+  errorCount: number;
 }
 
 interface PhotoBrowserViewProps {
@@ -100,8 +110,10 @@ interface PhotoBrowserViewProps {
   error: DropboxLoadError | null;
   /** True when the currently open folder is Dropbox root — changes the empty-state copy. */
   isRoot: boolean;
-  /** True if the current folder contains subfolders — distinguishes "no photos here yet, keep browsing" from "genuinely empty." */
-  hasSubfolders: boolean;
+  /** childrenStatus of the current folder's own sidebar-tree node — "unknown"/"loading" means we don't yet know if it has subfolders, so the empty state shows "Loading subfolders…" rather than guessing. */
+  childrenStatus: FolderChildrenStatus;
+  /** children.length of the current folder's own sidebar-tree node — only meaningful once childrenStatus is "loaded". */
+  childFolderCount: number;
   /** Set if the sidebar tree failed to discover this folder's children (distinct from "no direct photos") — drives the "Could not load subfolders" empty state. */
   subfoldersError: string | null;
   retryingSubfolders: boolean;
@@ -129,7 +141,8 @@ export default function PhotoBrowserView({
   loading,
   error,
   isRoot,
-  hasSubfolders,
+  childrenStatus,
+  childFolderCount,
   subfoldersError,
   retryingSubfolders,
   onRetrySubfolders,
@@ -289,7 +302,14 @@ export default function PhotoBrowserView({
           <span>childFolders={debugInfo.childFolderCount}</span>
           <span>hasDirectImages={String(debugInfo.hasDirectImages)}</span>
           <span>hasChildFolders={String(debugInfo.hasChildFolders)}</span>
-          <span>treeLoading={String(debugInfo.treeLoading)}</span>
+          <span className={debugInfo.treeLoading ? "font-semibold text-gold-600" : undefined}>
+            crawlRunning={String(debugInfo.treeLoading)}
+          </span>
+          <span>
+            discovered={debugInfo.discoveredCount} queued={debugInfo.queuedCount} errors={debugInfo.errorCount}
+          </span>
+          <span>selectedStatus={debugInfo.selectedChildrenStatus}</span>
+          <span>selectedChildCount={debugInfo.selectedChildCount}</span>
           <span>fetchAttempted={String(debugInfo.fetchAttempted)}</span>
           <span className={debugInfo.limitHit ? "font-semibold text-gold-600" : undefined}>
             limitHit={String(debugInfo.limitHit)}
@@ -346,7 +366,9 @@ export default function PhotoBrowserView({
           heading="Choose a photo folder"
           message="Select a Dropbox folder from the sidebar to view and rename photos. You can set a startup folder in Settings."
         />
-      ) : files.length === 0 && hasSubfolders ? (
+      ) : files.length === 0 && (childrenStatus === "unknown" || childrenStatus === "loading") ? (
+        <DropboxStatePanel icon={Loader2} spin heading="Loading subfolders…" message="Checking this folder for subfolders." />
+      ) : files.length === 0 && childFolderCount > 0 ? (
         <DropboxStatePanel
           icon={FolderSearch}
           heading="No photos directly in this folder"

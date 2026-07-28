@@ -46,6 +46,11 @@ function FolderTreeRow({
   const isExpanded = expandedPaths.has(node.pathLower);
   const isActive = node.pathLower === currentPath;
   const isRetrying = retryingPaths.has(node.pathLower);
+  // Undefined only for nodes built before childrenStatus existed — treat as loaded.
+  const status = node.childrenStatus ?? "loaded";
+  // Covers both "not yet queued" and "fetch in flight" — from the sidebar's
+  // point of view both just mean "we don't know this folder's children yet."
+  const isDiscovering = status === "unknown" || status === "loading";
 
   return (
     <div>
@@ -63,7 +68,9 @@ function FolderTreeRow({
           aria-label={isExpanded ? "Collapse" : "Expand"}
           className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-400 hover:text-ink-700"
         >
-          {hasChildren ? (
+          {status === "error" ? null : isDiscovering ? (
+            <Loader2 size={11} className="animate-spin text-ink-300" aria-label="Discovering subfolders" />
+          ) : hasChildren ? (
             isExpanded ? (
               <ChevronDown size={13} />
             ) : (
@@ -105,7 +112,7 @@ function FolderTreeRow({
           </>
         )}
       </div>
-      {hasChildren && isExpanded && (
+      {isExpanded && (hasChildren || isDiscovering) && (
         <div>
           {node.children.map((child) => (
             <FolderTreeRow
@@ -120,6 +127,15 @@ function FolderTreeRow({
               onRetryNode={onRetryNode}
             />
           ))}
+          {isDiscovering && (
+            <div
+              style={{ paddingLeft: `${8 + (depth + 1) * 16}px` }}
+              className="flex items-center gap-1.5 py-1 text-xs text-ink-400"
+            >
+              <Loader2 size={11} className="animate-spin" />
+              Loading…
+            </div>
+          )}
         </div>
       )}
     </div>

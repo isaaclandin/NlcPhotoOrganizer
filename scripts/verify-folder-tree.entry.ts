@@ -6,7 +6,8 @@
  * and must paginate every level's listing fully.
  */
 import { listFolderTree, collectFolderPaths, findFolderNode, refreshFolderNode } from "../src/services/dropboxService";
-import type { FolderTreeNode } from "../src/services/dropboxTypes";
+import type { FolderCrawlHandle } from "../src/services/dropboxService";
+import type { FolderTreeNode, FolderChildrenStatus } from "../src/services/dropboxTypes";
 
 interface Check {
   name: string;
@@ -81,6 +82,8 @@ interface FlakyPathState {
 function installFetchMock(
   pages: Record<string, (RawFolder | RawFile)[][]>,
   flaky: Record<string, FlakyPathState> = {},
+  /** `delays[path]` (ms) artificially slows that exact path's *initial* list_folder response — for simulating a deep/slow branch while other branches resolve fast, to verify progressive rendering doesn't block on the slowest branch. */
+  delays: Record<string, number> = {},
 ) {
   const cursorState = new Map<string, { path: string; pageIndex: number }>();
   const receivedPaths: string[] = [];
@@ -104,6 +107,9 @@ function installFetchMock(
     if (urlStr.includes("/files/list_folder")) {
       const path = String(body.path ?? "");
       receivedPaths.push(path);
+
+      const delayMs = delays[path.toLowerCase()];
+      if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
 
       const flakyState = flaky[path.toLowerCase()];
       if (flakyState && flakyState.failTimes > 0) {
@@ -387,6 +393,190 @@ function singlePage(path: string, subfolders: string[], files: string[] = []): (
   const retried = await refreshFolderNode(FLAKY_ALWAYS, alwaysFailedNode!.name, alwaysFailedNode!.pathDisplay, 3);
   assertTrue("Scenario 7b: after clearing the failure, per-node retry succeeds with no error", !retried.error);
   assertEqual("Scenario 7b: retried node now has its child folder", retried.children.length, 1);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 8 — progressive rendering: root-level folders (and a fast
+// sibling branch) must be reported via onNodeUpdate *before* a slow
+// sibling branch's own listing finishes, instead of the whole crawl
+// blocking on the slowest branch. This is the actual bug being fixed:
+// previously nothing rendered until every one of ~900 requests resolved.
+// ---------------------------------------------------------------------------
+{
+  const FAST = "/fastbranch";
+  const FAST_LEAF = `${FAST}/fastleaf`;
+  const SLOW = "/slowbranch";
+  const SLOW_LEAF = `${SLOW}/slowleaf`;
+
+  installFetchMock(
+    {
+      "": singlePage("", ["FastBranch", "SlowBranch"]),
+      [FAST]: singlePage(FAST, ["FastLeaf"]),
+      [FAST_LEAF]: singlePage(FAST_LEAF, []),
+      [SLOW]: singlePage(SLOW, ["SlowLeaf"]),
+      [SLOW_LEAF]: singlePage(SLOW_LEAF, []),
+    },
+    {},
+    { [SLOW]: 40 }, // SlowBranch's own listing is artificially slow
+  );
+
+  // The parent's own "loaded" emission carries its children as immediate
+  // stubs (childrenStatus "unknown") — that's the actual mechanism that
+  // makes a folder "appear" in the sidebar right away, before its own
+  // listing has even been fetched; there's no separate onNodeUpdate call
+  // per stub, so we look inside root's "loaded" node for them.
+  const updateLog: { path: string; node: FolderTreeNode }[] = [];
+  const tree = await listFolderTree("", {
+    onNodeUpdate: (path, node) => updateLog.push({ path, node }),
+  });
+
+  const rootLoadedEntry = updateLog.find((u) => u.path === "" && u.node.childrenStatus === "loaded");
+  assertTrue("Scenario 8: root reports loaded (with stub children) via onNodeUpdate", Boolean(rootLoadedEntry));
+  const fastStub = rootLoadedEntry?.node.children.find((c) => c.pathLower === FAST);
+  const slowStub = rootLoadedEntry?.node.children.find((c) => c.pathLower === SLOW);
+  assertEqual("Scenario 8: FastBranch appears as an unknown stub the instant root loads", fastStub?.childrenStatus, "unknown");
+  assertEqual("Scenario 8: SlowBranch appears as an unknown stub the instant root loads", slowStub?.childrenStatus, "unknown");
+
+  const rootLoadedIndex = updateLog.indexOf(rootLoadedEntry!);
+  const fastBranchLoadedIndex = updateLog.findIndex((u) => u.path === FAST && u.node.childrenStatus === "loaded");
+  const slowBranchLoadedIndex = updateLog.findIndex((u) => u.path === SLOW && u.node.childrenStatus === "loaded");
+  assertTrue(
+    "Scenario 8: both branches finish loading after root's own stub emission (never before it's known to exist)",
+    fastBranchLoadedIndex > rootLoadedIndex && slowBranchLoadedIndex > rootLoadedIndex,
+  );
+  assertTrue(
+    "Scenario 8: FastBranch finishes loading before SlowBranch (crawl doesn't block on the slow branch)",
+    fastBranchLoadedIndex >= 0 && slowBranchLoadedIndex >= 0 && fastBranchLoadedIndex < slowBranchLoadedIndex,
+  );
+
+  // Final resolved tree is still fully correct once everything settles.
+  const allPaths = collectFolderPaths(tree);
+  for (const p of [FAST, FAST_LEAF, SLOW, SLOW_LEAF]) {
+    assertTrue(`Scenario 8: final tree still contains ${p}`, allPaths.includes(p));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 9 — every node's childrenStatus visits unknown -> loading ->
+// loaded/error in that relative order, and never gets stuck: a folder must
+// not remain "loading" forever, and a zero-photo (but successfully listed)
+// folder must resolve to "loaded", never "error".
+// ---------------------------------------------------------------------------
+{
+  const EMPTY = "/emptybutok";
+  installFetchMock({
+    "": singlePage("", ["EmptyButOk"]),
+    [EMPTY]: singlePage(EMPTY, []), // zero subfolders, zero images, succeeds
+  });
+
+  const statusesByPath = new Map<string, FolderChildrenStatus[]>();
+  const updateLog: { path: string; node: FolderTreeNode }[] = [];
+  await listFolderTree("", {
+    onNodeUpdate: (path, node) => {
+      updateLog.push({ path, node });
+      const list = statusesByPath.get(path) ?? [];
+      list.push(node.childrenStatus ?? "loaded");
+      statusesByPath.set(path, list);
+    },
+  });
+
+  const rootLoadedEntry = updateLog.find((u) => u.path === "" && u.node.childrenStatus === "loaded");
+  const emptyStub = rootLoadedEntry?.node.children.find((c) => c.pathLower === EMPTY);
+  assertEqual(
+    "Scenario 9: EmptyButOk is visible as an unknown stub the instant root loads, before its own fetch runs",
+    emptyStub?.childrenStatus,
+    "unknown",
+  );
+
+  const rootStatuses = statusesByPath.get("") ?? [];
+  assertEqual("Scenario 9: root's own status sequence is loading -> loaded", rootStatuses.join(","), "loading,loaded");
+
+  const emptyStatuses = statusesByPath.get(EMPTY) ?? [];
+  assertEqual(
+    "Scenario 9: a zero-child, zero-image folder's own status sequence is loading -> loaded (never error, never stuck)",
+    emptyStatuses.join(","),
+    "loading,loaded",
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 10 — a folder whose fetch fails transitions to "error" (not left
+// hanging on "loading"), distinct from a folder that's merely empty.
+// ---------------------------------------------------------------------------
+{
+  const BAD = "/willfail";
+  installFetchMock(
+    { "": singlePage("", ["WillFail"]) },
+    { [BAD]: { failTimes: 99, status: 500 } },
+  );
+
+  const statusesByPath = new Map<string, FolderChildrenStatus[]>();
+  const tree = await listFolderTree("", {
+    onNodeUpdate: (path, node) => {
+      const list = statusesByPath.get(path) ?? [];
+      list.push(node.childrenStatus ?? "loaded");
+      statusesByPath.set(path, list);
+    },
+  });
+
+  const badStatuses = statusesByPath.get(BAD) ?? [];
+  assertEqual("Scenario 10: failed node's own status sequence is loading -> error (never left stuck on loading)", badStatuses.join(","), "loading,error");
+  const badNode = findFolderNode(tree, BAD);
+  assertTrue("Scenario 10: failed node carries an error message distinct from 'no photos'", Boolean(badNode?.error));
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 11 — prioritize(): when the user navigates to (or expands) a
+// folder that's still queued behind others under the concurrency limit,
+// its fetch should jump to the front of the queue instead of waiting its
+// turn, without disturbing the fetch that's already in flight.
+// ---------------------------------------------------------------------------
+{
+  const A = "/a";
+  const B = "/b";
+  const C = "/c";
+
+  const mock = installFetchMock(
+    {
+      "": singlePage("", ["A", "B", "C"]),
+      [A]: singlePage(A, []),
+      [B]: singlePage(B, []),
+      [C]: singlePage(C, []),
+    },
+    {},
+    // A stays "active" for a while so there's a real window in which B and
+    // C are both queued (but not yet started) and prioritize(C) can still
+    // change what runs next. Without this, an all-microtask race can
+    // resolve the entire queue before a same-tick prioritize() call lands.
+    { [A]: 20 },
+  );
+
+  let handle: FolderCrawlHandle | null = null;
+  await listFolderTree("", {
+    concurrency: 1, // force one fetch at a time so B/C's order is observable
+    onCrawlHandle: (h) => {
+      handle = h;
+    },
+    onNodeUpdate: (path, node) => {
+      if (path === "" && node.childrenStatus === "loaded") {
+        // By the time root itself is "loaded", A/B/C haven't been queued
+        // yet (that happens synchronously right after this callback
+        // returns) — deferring to a macrotask guarantees the queue is
+        // populated (A active, B and C queued) before prioritizing C,
+        // and A's own 20ms delay keeps it active long enough for this
+        // macrotask to actually land before A finishes.
+        setTimeout(() => handle?.prioritize(C), 0);
+      }
+    },
+  });
+
+  const bIndex = mock.receivedPaths.indexOf(B);
+  const cIndex = mock.receivedPaths.indexOf(C);
+  assertTrue("Scenario 11: both B and C were fetched", bIndex >= 0 && cIndex >= 0);
+  assertTrue(
+    "Scenario 11: prioritize(C) moved C ahead of B in fetch order despite C being queued behind B",
+    cIndex < bIndex,
+  );
 }
 
 // ---------------------------------------------------------------------------

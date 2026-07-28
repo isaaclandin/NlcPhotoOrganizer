@@ -22,6 +22,7 @@ import {
   listFolder,
   listFolderTree,
   collectFolderPaths,
+  collectFolderTreeStats,
   findFolderNode,
   refreshFolderNode,
   replaceNodeInTree,
@@ -29,7 +30,7 @@ import {
   renameFiles,
   DropboxServiceError,
 } from "./services/dropboxService";
-import type { ThumbnailResultMap } from "./services/dropboxService";
+import type { ThumbnailResultMap, FolderCrawlHandle } from "./services/dropboxService";
 import { completeDropboxAuthIfRedirected, hasDropboxRefreshToken } from "./services/dropboxAuth";
 import type { DropboxEntry, DropboxFileItem, FolderTreeNode } from "./services/dropboxTypes";
 import {
@@ -92,6 +93,16 @@ export default function App() {
   /** Paths currently being re-crawled via the sidebar's per-node "Retry" — separate from folderTreeLoading (a whole-tree rebuild). */
   const [retryingFolderPaths, setRetryingFolderPaths] = useState<Set<string>>(new Set());
   const folderTreeAbortRef = useRef<AbortController | null>(null);
+  /** Bumped on every buildFolderTree() call; a progressive onNodeUpdate
+   * closure captures its value at creation time and checks it before
+   * touching state, so updates from a superseded crawl (disconnect,
+   * manual refresh, reconnect) never overwrite newer tree state — belt
+   * and suspenders alongside the AbortController's own signal check. */
+  const folderCrawlSessionRef = useRef(0);
+  /** Lets loadDropboxFolder/toggleExpandPath bump a folder's own fetch to
+   * the front of the crawl's concurrency queue when the user interacts
+   * with it before the crawl has reached it on its own. */
+  const folderCrawlHandleRef = useRef<FolderCrawlHandle | null>(null);
 
   const [renaming, setRenaming] = useState(false);
   const [renameProgress, setRenameProgress] = useState<RenameProgress | null>(null);
@@ -115,24 +126,31 @@ export default function App() {
   const dropboxImageFiles = dropboxEntries.filter(
     (e): e is DropboxFileItem => e.type === "file" && e.isImage,
   );
-  // Whether the *current* folder has subfolders — independent of the
-  // recursive sidebar tree crawl, since this comes straight from the same
-  // listFolder() call that already populated dropboxEntries. Used to tell
-  // "no photos here, but keep browsing" apart from "genuinely empty."
+  // Direct-listing-derived — from the same listFolder() call that already
+  // populated dropboxEntries, independent of the recursive sidebar crawl.
+  // Kept for the debug panel as a cross-check; the empty-state's own
+  // "does this folder have subfolders" decision uses the tree node's
+  // childrenStatus/children instead (see PhotoBrowserView), since that's
+  // what "known" vs "still loading" actually means under progressive
+  // rendering.
   const dropboxChildFolderCount = dropboxEntries.filter((e) => e.type === "folder").length;
   const dropboxHasSubfolders = dropboxChildFolderCount > 0;
 
   // Production-safe folder-tree diagnostics (no tokens, no request bodies) —
   // surfaced in the UI so nested-folder-discovery issues can be verified
-  // directly on a live deployment without needing devtools. childFolderCount
-  // / hasDirectImages come straight from the current folder's own listFolder
-  // result (always fresh); limitHit/nodeError reflect that same folder's
-  // node in the separately-crawled sidebar tree, if the crawl has reached it.
+  // directly on a live deployment without needing devtools. hasDirectImages
+  // comes straight from the current folder's own listFolder result (always
+  // fresh); everything else reflects that same folder's node in the
+  // separately, progressively-crawled sidebar tree, if reached yet.
   const selectedFolderNode = folderTree ? findFolderNode(folderTree, dropboxPath) : null;
-  // Read-only check for the debug panel only — never fed back into
-  // setExpandedPaths. Confirms the sidebar isn't accidentally back to
-  // "everything expanded" (this is exactly the bug being guarded against).
+  const selectedChildrenStatus = selectedFolderNode?.childrenStatus ?? "unknown";
+  // Read-only checks for the debug panel only — never fed back into
+  // setExpandedPaths/setFolderTree. Confirms the sidebar isn't accidentally
+  // back to "everything expanded" (the earlier bug this panel guards
+  // against) and surfaces crawl-wide progress (also earlier bug: blocking
+  // render until all ~900 requests finished).
   const allDiscoveredFolderPaths = folderTree ? collectFolderPaths(folderTree) : [];
+  const treeStats = folderTree ? collectFolderTreeStats(folderTree) : { discoveredCount: 0, queuedCount: 0, errorCount: 0 };
   const folderDebugInfo: FolderDebugInfo = {
     path: dropboxPath || "/",
     depth: ancestorDropboxPaths(dropboxPath).length - 1,
@@ -149,24 +167,62 @@ export default function App() {
     totalFolderCount: allDiscoveredFolderPaths.length,
     allExpanded:
       allDiscoveredFolderPaths.length > 0 && allDiscoveredFolderPaths.every((p) => expandedPaths.has(p)),
+    selectedChildrenStatus,
+    selectedChildCount: selectedFolderNode?.children.length ?? 0,
+    discoveredCount: treeStats.discoveredCount,
+    queuedCount: treeStats.queuedCount,
+    errorCount: treeStats.errorCount,
   };
 
   const buildFolderTree = () => {
     folderTreeAbortRef.current?.abort();
     const controller = new AbortController();
     folderTreeAbortRef.current = controller;
+    const sessionId = ++folderCrawlSessionRef.current;
+    folderCrawlHandleRef.current = null;
     setFolderTreeLoading(true);
     // Folder *discovery* is still fully recursive (listFolderTree crawls the
-    // whole tree up front), but the sidebar UI must not auto-expand
-    // everything it found — that made the tree unusably tall on a real
-    // account. expandedPaths is left untouched here: it already starts at
-    // root-only (see useState below) and otherwise only ever gains ancestor
-    // paths (loadDropboxFolder) or a single manually-toggled path
+    // whole tree), but this used to wait for the ENTIRE crawl (all ~900
+    // requests) before rendering anything — onNodeUpdate fires progressively
+    // instead, so the sidebar shows root-level folders the moment they're
+    // known and fills in each branch as its own fetch resolves, without
+    // blocking on the rest of the tree.
+    //
+    // sessionId + the AbortController's signal are belt-and-suspenders
+    // against stale updates: if the user disconnects, refreshes, or
+    // reconnects mid-crawl, this closure's sessionId no longer matches
+    // folderCrawlSessionRef.current and every update from the superseded
+    // crawl is silently ignored instead of clobbering newer tree state.
+    //
+    // expandedPaths is never touched here: it already starts at root-only
+    // (see useState below) and otherwise only ever gains ancestor paths
+    // (loadDropboxFolder) or a single manually-toggled path
     // (toggleExpandPath), never "every folder in the tree."
-    listFolderTree("", { signal: controller.signal }).then((tree) => {
-      if (controller.signal.aborted) return;
-      setFolderTree(tree);
+    listFolderTree("", {
+      signal: controller.signal,
+      onCrawlHandle: (handle) => {
+        if (sessionId === folderCrawlSessionRef.current) folderCrawlHandleRef.current = handle;
+      },
+      onNodeUpdate: (path, node) => {
+        if (sessionId !== folderCrawlSessionRef.current) return;
+        setFolderTree((prev) => {
+          const existing = prev ? findFolderNode(prev, path) : null;
+          // Don't blank an already-loaded node's children back to empty
+          // just because a refresh is about to re-fetch it — only apply
+          // "loading" for genuinely new/unknown nodes, so a manual
+          // refresh doesn't flash the sidebar back to empty while it
+          // re-crawls; the fresher "loaded"/"error" update still applies
+          // normally once it arrives.
+          if (node.childrenStatus === "loading" && existing?.childrenStatus === "loaded") {
+            return prev;
+          }
+          return prev ? replaceNodeInTree(prev, path, node) : node;
+        });
+      },
+    }).then(() => {
+      if (sessionId !== folderCrawlSessionRef.current) return;
       setFolderTreeLoading(false);
+      folderCrawlHandleRef.current = null;
     });
   };
 
@@ -199,8 +255,18 @@ export default function App() {
   const toggleExpandPath = (path: string) => {
     setExpandedPaths((prev) => {
       const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+        // Expanding a folder whose children haven't been fetched yet — jump
+        // its fetch to the front of the crawl's concurrency queue instead of
+        // waiting for however many other folders are ahead of it.
+        const node = folderTree ? findFolderNode(folderTree, path) : null;
+        if (!node || node.childrenStatus === "unknown") {
+          folderCrawlHandleRef.current?.prioritize(path);
+        }
+      }
       return next;
     });
   };
@@ -242,6 +308,11 @@ export default function App() {
   };
 
   const loadDropboxFolder = async (path: string) => {
+    // The user is navigating here right now — if the sidebar crawl hasn't
+    // reached this folder's children yet, fetch them next instead of
+    // wherever they'd otherwise fall in the queue, so "Loading subfolders…"
+    // resolves quickly rather than waiting on the rest of the tree.
+    folderCrawlHandleRef.current?.prioritize(path);
     setDropboxLoading(true);
     setDropboxError(null);
     setDropboxPath(path);
@@ -802,7 +873,8 @@ export default function App() {
           loading={dropboxLoading}
           error={dropboxError}
           isRoot={dropboxPath === ""}
-          hasSubfolders={dropboxHasSubfolders}
+          childrenStatus={selectedChildrenStatus}
+          childFolderCount={selectedFolderNode?.children.length ?? 0}
           subfoldersError={selectedFolderNode?.error ?? null}
           retryingSubfolders={retryingFolderPaths.has(dropboxPath)}
           onRetrySubfolders={() => retryFolderNode(dropboxPath)}
