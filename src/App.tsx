@@ -866,7 +866,6 @@ export default function App() {
               setView("browser");
               loadDropboxFolder(path);
             }}
-            onRetry={buildFolderTree}
             onRetryNode={retryFolderNode}
           />
         )
