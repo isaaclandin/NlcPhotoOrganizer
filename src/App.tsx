@@ -41,6 +41,7 @@ import {
 } from "./utils/dropboxPath";
 import { buildPreviewFilename, buildRenamePattern, formatSequence } from "./utils/naming";
 import { clampSidebarWidth, loadStoredSidebarWidth, saveSidebarWidth } from "./utils/sidebarWidth";
+import { loadStoredPhotoGridColumns, savePhotoGridColumns } from "./utils/photoZoom";
 import type { AppSettings, BatchItemRecord, BatchRecord, LabelItem, NewBatchItem } from "./services/types";
 
 type View = "browser" | "settings" | "logs";
@@ -61,7 +62,14 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedLocation, setSelectedLocation] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [columns, setColumns] = useState(6);
+  // Defaults to the smallest zoom (most columns/most visible thumbnails) for
+  // a fresh user with no saved preference; a manually-chosen value persists
+  // across reloads (see handleColumnsChange below) instead of resetting.
+  const [columns, setColumns] = useState(() => loadStoredPhotoGridColumns());
+  const handleColumnsChange = (next: number) => {
+    setColumns(next);
+    savePhotoGridColumns(next);
+  };
   const [photoViewMode, setPhotoViewMode] = useState<"grid" | "list">("grid");
   const [sidebarWidth, setSidebarWidth] = useState(() => loadStoredSidebarWidth());
 
@@ -905,7 +913,7 @@ export default function App() {
           onTogglePhoto={togglePhoto}
           onToggleSelectAll={toggleSelectAll}
           columns={columns}
-          onColumnsChange={setColumns}
+          onColumnsChange={handleColumnsChange}
           viewMode={photoViewMode}
           onViewModeChange={setPhotoViewMode}
           onGoToSettings={() => setView("settings")}

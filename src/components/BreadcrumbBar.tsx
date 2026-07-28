@@ -28,8 +28,8 @@ function visibleEntries(items: string[]): BreadcrumbEntry[] {
 
 export default function BreadcrumbBar({ items, onNavigate }: BreadcrumbBarProps) {
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto rounded-full border border-beige-300/70 bg-beige-100 px-4 py-2.5 text-sm text-ink-500">
-      <Box size={16} className="shrink-0 text-sage-500" />
+    <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto rounded-full border border-beige-300/70 bg-beige-100 px-3.5 py-1.5 text-[13px] text-ink-500">
+      <Box size={14} className="shrink-0 text-sage-500" />
       {visibleEntries(items).map((entry, i) => {
         if (entry.kind === "collapsed") {
           return (

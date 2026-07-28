@@ -68,9 +68,9 @@ export default function RenameActionBar({
 
   return (
     <div className="border-t border-beige-300/60 bg-beige-100">
-      <div className="grid grid-cols-1 gap-5 px-6 py-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 px-4 py-1 md:grid-cols-3">
         <div>
-          <div className="mb-2.5 flex items-center gap-1.5">
+          <div className="mb-1.5 flex items-center gap-1.5">
             <span className="text-sm font-semibold text-ink-900">Location</span>
             <span className="text-xs text-ink-400">(required)</span>
           </div>
@@ -79,7 +79,7 @@ export default function RenameActionBar({
               to its own label and wraps to a new row rather than squeezing
               or overflowing. rounded-2xl on the container (not rounded-full)
               so it still looks intentional once it wraps past one row. */}
-          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-beige-300 bg-cream-50 p-2">
+          <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-beige-300 bg-cream-50 p-1.5">
             {locations.map((location) => {
               const isSelected = location === selectedLocation;
               return (
@@ -87,7 +87,7 @@ export default function RenameActionBar({
                   key={location}
                   type="button"
                   onClick={() => onSelectLocation(location)}
-                  className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition-colors duration-150 ${
+                  className={`whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium transition-colors duration-150 ${
                     isSelected
                       ? "bg-forest-600 text-cream-50 shadow-soft"
                       : "text-ink-700 hover:bg-sage-100"
@@ -98,14 +98,18 @@ export default function RenameActionBar({
               );
             })}
           </div>
+          <p className="mt-1.5 flex items-center gap-1.5 text-xs text-ink-500">
+            <Sparkles size={12} className="shrink-0 text-gold-500" />
+            Tip: Use tags to keep your photos easy to find later.
+          </p>
         </div>
 
         <div>
-          <div className="mb-2.5 flex items-center gap-1.5">
+          <div className="mb-1 flex items-center gap-1.5">
             <span className="text-sm font-semibold text-ink-900">Tags</span>
             <span className="text-xs text-ink-400">(optional)</span>
           </div>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-1">
             {tagOptions.map((tag) => (
               <Pill
                 key={tag.label}
@@ -121,47 +125,50 @@ export default function RenameActionBar({
         </div>
 
         <div className="relative">
-          <span className="mb-2.5 block text-sm font-semibold text-ink-900">Rename Preview</span>
-          <div className="rounded-xl border border-sage-300/70 bg-sage-50 px-4 py-3.5 pr-14 shadow-soft">
-            <p className="truncate font-mono text-[16px] leading-snug">
+          <span className="mb-1.5 block text-sm font-semibold text-ink-900">Rename Preview</span>
+          <div className="rounded-xl border border-sage-300/70 bg-sage-50 px-3.5 py-2.5 pr-12 shadow-soft">
+            <p className="truncate font-mono text-[15px] leading-snug">
               <span className="font-bold text-forest-700">{parts.join("_")}_</span>
               <span className="font-bold text-gold-600">{sequence}</span>
               <span className="text-ink-400">.jpg</span>
             </p>
           </div>
-          <p className="mt-1.5 text-xs text-ink-400">Sequence will increment for each photo.</p>
+          <p className="mt-1 text-xs text-ink-400">Sequence will increment for each photo.</p>
           <img
             src={miniDuckPreviewReference}
             alt=""
             role="presentation"
             draggable={false}
-            className="pointer-events-none absolute -bottom-3 -right-2 h-auto w-20 select-none object-contain drop-shadow-md"
+            className="pointer-events-none absolute -bottom-2 -right-1 h-auto w-14 select-none object-contain drop-shadow-md"
           />
         </div>
       </div>
 
-      <div className="flex flex-col gap-3 border-t border-beige-300/60 bg-cream-100 px-6 py-3.5 sm:flex-row sm:items-center sm:justify-between">
-        {resultStyle && ResultIcon ? (
-          <div className={`flex items-center gap-2 text-sm font-medium ${resultStyle.wrap}`}>
-            <ResultIcon size={15} className="shrink-0" />
-            <span>{renameResult!.message}</span>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 text-sm text-ink-500">
-            <Sparkles size={15} className="text-gold-500" />
-            <span>Tip: Use tags to keep your photos easy to find later.</span>
-          </div>
-        )}
-        <div className="flex items-center gap-3">
-          <Button variant="secondary" icon={<Trash2 size={16} />} onClick={onClearSelection} disabled={renaming}>
+      <div className="flex flex-col gap-2 border-t border-beige-300/60 bg-cream-100 px-4 py-1 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-h-[20px]">
+          {resultStyle && ResultIcon && (
+            <div className={`flex items-center gap-2 text-xs font-medium ${resultStyle.wrap}`}>
+              <ResultIcon size={14} className="shrink-0" />
+              <span>{renameResult!.message}</span>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2.5">
+          <Button
+            variant="secondary"
+            icon={<Trash2 size={15} />}
+            onClick={onClearSelection}
+            disabled={renaming}
+            className="!px-3.5 !py-2"
+          >
             Clear Selection
           </Button>
           <Button
             variant="primary"
-            icon={renaming ? <Loader2 size={18} className="animate-spin" /> : <FilePenLine size={18} />}
+            icon={renaming ? <Loader2 size={16} className="animate-spin" /> : <FilePenLine size={16} />}
             onClick={onRename}
             disabled={selectedCount === 0 || !selectedLocation || renaming}
-            className="!font-semibold active:!bg-forest-800"
+            className="!px-3.5 !py-2 !font-semibold active:!bg-forest-800"
           >
             {renaming
               ? `Renaming ${renameProgress?.done ?? 0} of ${renameProgress?.total ?? selectedCount}…`

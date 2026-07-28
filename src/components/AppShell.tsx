@@ -127,7 +127,7 @@ export default function AppShell({
                 : "flex w-64 shrink-0 flex-col overflow-hidden border-r border-beige-300/60 bg-cream-100"
             }
           >
-            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden pb-3 pt-3">{sidebar}</div>
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden pb-2 pt-1.5">{sidebar}</div>
           </aside>
 
           {isResizable && (

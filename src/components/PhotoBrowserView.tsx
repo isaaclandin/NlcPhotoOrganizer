@@ -174,7 +174,7 @@ export default function PhotoBrowserView({
   // showing below it — including the missing-credentials early return,
   // which is exactly when a failed-connection-attempt message matters most.
   const startupWarningBanner = startupWarning && (
-    <div className="mx-6 mt-4 flex items-center gap-2 rounded-xl border border-gold-400/50 bg-gold-300/20 px-3.5 py-2.5 text-xs text-gold-600">
+    <div className="mx-4 mt-2 flex items-center gap-2 rounded-xl border border-gold-400/50 bg-gold-300/20 px-3.5 py-2.5 text-xs text-gold-600">
       <AlertTriangle size={14} className="shrink-0" />
       <span className="flex-1">{startupWarning}</span>
       <button
@@ -205,7 +205,7 @@ export default function PhotoBrowserView({
 
   return (
     <>
-      <div className="flex items-center justify-between border-b border-beige-300/60 px-6 py-4">
+      <div className="flex items-center justify-between border-b border-beige-300/60 px-4 py-1">
         <button
           type="button"
           onClick={onToggleSelectAll}
@@ -224,7 +224,7 @@ export default function PhotoBrowserView({
           {selectionLabel}
         </button>
 
-        <div className="flex items-center gap-5">
+        <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -254,7 +254,7 @@ export default function PhotoBrowserView({
             </button>
           </div>
 
-          <div className="flex items-center gap-1 rounded-xl border border-beige-300 bg-cream-50 p-1">
+          <div className="flex items-center gap-1 rounded-xl border border-beige-300 bg-cream-50 p-0.5">
             <button
               type="button"
               onClick={() => onViewModeChange("grid")}
@@ -294,7 +294,7 @@ export default function PhotoBrowserView({
       </div>
 
       {showDebug && (
-        <div className="mx-6 mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-beige-300/70 bg-beige-100 px-3.5 py-2 font-mono text-[11px] text-ink-600">
+        <div className="mx-4 mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-beige-300/70 bg-beige-100 px-3.5 py-2 font-mono text-[11px] text-ink-600">
           <span>
             path=<span className="text-forest-700">{debugInfo.path}</span>
           </span>
@@ -377,7 +377,7 @@ export default function PhotoBrowserView({
       ) : files.length === 0 ? (
         <DropboxStatePanel icon={ImageOff} heading="No supported photos found in this folder" message="This folder doesn't contain any supported image files." />
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           {thumbnailWarning && (
             <div className="mb-3 flex items-center gap-2 rounded-xl border border-gold-400/50 bg-gold-300/20 px-3.5 py-2.5 text-xs text-gold-600">
               <AlertTriangle size={14} className="shrink-0" />

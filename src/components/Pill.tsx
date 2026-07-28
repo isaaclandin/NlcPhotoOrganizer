@@ -30,7 +30,7 @@ export default function Pill({
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-3.5 py-2 text-sm font-medium transition-colors duration-150 ${
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[13px] font-medium transition-colors duration-150 ${
         selected
           ? "border-forest-700/30 bg-forest-600 text-cream-50 shadow-soft"
           : "border-beige-300 bg-cream-50 text-ink-700 hover:border-sage-300 hover:bg-sage-50"
