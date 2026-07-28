@@ -52,10 +52,15 @@ function FolderTreeRow({
   // point of view both just mean "we don't know this folder's children yet."
   const isDiscovering = status === "unknown" || status === "loading";
 
+  // Capped so very deep trees (10+ levels) don't eat the whole row's width
+  // in indentation alone, leaving nothing for the name — truncation below
+  // still keeps a too-long name readable at any depth.
+  const indentDepth = Math.min(depth, 10);
+
   return (
     <div>
       <div
-        style={{ paddingLeft: `${8 + depth * 16}px` }}
+        style={{ paddingLeft: `${8 + indentDepth * 12}px` }}
         className={`group flex w-full items-center gap-1 rounded-lg py-1.5 pr-2 text-sm transition-colors duration-100 ${
           isActive
             ? "border-l-2 border-forest-600 bg-sage-100 font-semibold text-forest-700"
@@ -88,7 +93,9 @@ function FolderTreeRow({
           ) : (
             <Folder size={15} className="shrink-0 fill-gold-300/70 text-gold-500" />
           )}
-          <span className="truncate">{node.name}</span>
+          <span className="truncate" title={node.pathDisplay}>
+            {node.name}
+          </span>
           {!node.error && node.isPartial ? (
             <span className="ml-auto shrink-0 text-[10px] leading-none text-ink-400" title="Folder limit reached — some subfolders here weren't discovered">
               +
@@ -129,7 +136,7 @@ function FolderTreeRow({
           ))}
           {isDiscovering && (
             <div
-              style={{ paddingLeft: `${8 + (depth + 1) * 16}px` }}
+              style={{ paddingLeft: `${8 + Math.min(depth + 1, 10) * 12}px` }}
               className="flex items-center gap-1.5 py-1 text-xs text-ink-400"
             >
               <Loader2 size={11} className="animate-spin" />

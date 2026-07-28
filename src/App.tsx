@@ -40,6 +40,7 @@ import {
   pathForBreadcrumbIndex,
 } from "./utils/dropboxPath";
 import { buildPreviewFilename, buildRenamePattern, formatSequence } from "./utils/naming";
+import { clampSidebarWidth, loadStoredSidebarWidth, saveSidebarWidth } from "./utils/sidebarWidth";
 import type { AppSettings, BatchItemRecord, BatchRecord, LabelItem, NewBatchItem } from "./services/types";
 
 type View = "browser" | "settings" | "logs";
@@ -62,6 +63,16 @@ export default function App() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [columns, setColumns] = useState(6);
   const [photoViewMode, setPhotoViewMode] = useState<"grid" | "list">("grid");
+  const [sidebarWidth, setSidebarWidth] = useState(() => loadStoredSidebarWidth());
+
+  // Re-clamp (never persist) if the browser window is resized narrower —
+  // otherwise a sidebar widened on a large window could crowd out the photo
+  // grid after the user shrinks the window, since the max width is vw-based.
+  useEffect(() => {
+    const handleResize = () => setSidebarWidth((w) => clampSidebarWidth(w));
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [locations, setLocations] = useState<LabelItem[]>([]);
@@ -789,6 +800,15 @@ export default function App() {
       onOpenSettings={() => setView("settings")}
       onTitleClick={() => setView("browser")}
       settingsActive={view === "settings"}
+      // FolderSidebar (not SettingsSidebar) is shown for both "browser" and
+      // "logs" — only Settings uses the separate fixed-width SettingsSidebar.
+      resizableSidebar={view !== "settings"}
+      sidebarWidth={sidebarWidth}
+      onSidebarWidthChange={setSidebarWidth}
+      onSidebarWidthCommit={(width) => {
+        setSidebarWidth(width);
+        saveSidebarWidth(width);
+      }}
       sidebar={
         view === "settings" ? (
           <SettingsSidebar active={settingsSection} onSelect={handleSelectSettingsSection} />
