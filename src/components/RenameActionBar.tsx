@@ -74,12 +74,17 @@ export default function RenameActionBar({
             <span className="text-sm font-semibold text-ink-900">Location</span>
             <span className="text-xs text-ink-400">(required)</span>
           </div>
-          {/* flex-wrap + gap (not justify-between/fixed widths) so this stays
-              balanced for any number/length of locations — each pill sizes
-              to its own label and wraps to a new row rather than squeezing
-              or overflowing. rounded-2xl on the container (not rounded-full)
+          {/* inline-flex (not flex) so this container hugs the pills instead
+              of stretching to the full grid-column width — a plain `flex`
+              div is still block-level and fills its parent by default.
+              flex-wrap + gap (not justify-between/fixed widths) so this
+              stays balanced for any number/length of locations — each pill
+              sizes to its own label and wraps to a new row rather than
+              squeezing or overflowing. max-w-full caps it at the column's
+              width so it still wraps instead of overflowing if the location
+              list grows long. rounded-2xl on the container (not rounded-full)
               so it still looks intentional once it wraps past one row. */}
-          <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-beige-300 bg-cream-50 p-1.5">
+          <div className="inline-flex w-fit max-w-full flex-wrap items-center gap-1.5 rounded-2xl border border-beige-300 bg-cream-50 p-1.5">
             {locations.map((location) => {
               const isSelected = location === selectedLocation;
               return (
