@@ -3,7 +3,7 @@
  * localStorage, not the Dropbox-backed settings layer. */
 import { MIN_COLUMNS, MAX_COLUMNS } from "../components/PhotoBrowserView";
 
-export const PHOTO_ZOOM_STORAGE_KEY = "dropboxPhotoGridColumns";
+export const PHOTO_ZOOM_STORAGE_KEY = "nlcPhotoRenamer.photoZoom";
 /** MAX_COLUMNS = the most columns = the smallest thumbnails = the most
  * photos visible at once — the "smallest zoom" default for a fresh user. */
 export const DEFAULT_PHOTO_GRID_COLUMNS = MAX_COLUMNS;
@@ -29,5 +29,13 @@ export function savePhotoGridColumns(columns: number): void {
     localStorage.setItem(PHOTO_ZOOM_STORAGE_KEY, String(Math.round(columns)));
   } catch {
     // best-effort — a UI preference not persisting isn't worth surfacing an error for
+  }
+}
+
+export function clearStoredPhotoGridColumns(): void {
+  try {
+    localStorage.removeItem(PHOTO_ZOOM_STORAGE_KEY);
+  } catch {
+    // best-effort
   }
 }

@@ -2,7 +2,7 @@
  * framework-free so it's easy to reason about/reuse from both App.tsx
  * (initial load, persistence) and AppShell.tsx (drag clamping). */
 
-export const SIDEBAR_WIDTH_STORAGE_KEY = "dropboxFolderSidebarWidth";
+export const SIDEBAR_WIDTH_STORAGE_KEY = "nlcPhotoRenamer.folderSidebarWidth";
 export const DEFAULT_SIDEBAR_WIDTH = 300;
 export const MIN_SIDEBAR_WIDTH = 220;
 export const MAX_SIDEBAR_WIDTH_PX = 520;
@@ -39,5 +39,13 @@ export function saveSidebarWidth(width: number): void {
     localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(Math.round(width)));
   } catch {
     // best-effort — a UI preference not persisting isn't worth surfacing an error for
+  }
+}
+
+export function clearStoredSidebarWidth(): void {
+  try {
+    localStorage.removeItem(SIDEBAR_WIDTH_STORAGE_KEY);
+  } catch {
+    // best-effort
   }
 }

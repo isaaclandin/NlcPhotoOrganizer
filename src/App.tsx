@@ -40,8 +40,25 @@ import {
   pathForBreadcrumbIndex,
 } from "./utils/dropboxPath";
 import { buildPreviewFilename, buildRenamePattern, formatSequence } from "./utils/naming";
-import { clampSidebarWidth, loadStoredSidebarWidth, saveSidebarWidth } from "./utils/sidebarWidth";
-import { loadStoredPhotoGridColumns, savePhotoGridColumns } from "./utils/photoZoom";
+import {
+  DEFAULT_SIDEBAR_WIDTH,
+  clampSidebarWidth,
+  clearStoredSidebarWidth,
+  loadStoredSidebarWidth,
+  saveSidebarWidth,
+} from "./utils/sidebarWidth";
+import {
+  DEFAULT_PHOTO_GRID_COLUMNS,
+  clearStoredPhotoGridColumns,
+  loadStoredPhotoGridColumns,
+  savePhotoGridColumns,
+} from "./utils/photoZoom";
+import {
+  DEFAULT_PHOTO_VIEW_MODE,
+  clearStoredPhotoViewMode,
+  loadStoredPhotoViewMode,
+  savePhotoViewMode,
+} from "./utils/photoViewMode";
 import type { AppSettings, BatchItemRecord, BatchRecord, LabelItem, NewBatchItem } from "./services/types";
 
 type View = "browser" | "settings" | "logs";
@@ -70,7 +87,11 @@ export default function App() {
     setColumns(next);
     savePhotoGridColumns(next);
   };
-  const [photoViewMode, setPhotoViewMode] = useState<"grid" | "list">("grid");
+  const [photoViewMode, setPhotoViewMode] = useState<"grid" | "list">(() => loadStoredPhotoViewMode());
+  const handlePhotoViewModeChange = (mode: "grid" | "list") => {
+    setPhotoViewMode(mode);
+    savePhotoViewMode(mode);
+  };
   const [sidebarWidth, setSidebarWidth] = useState(() => loadStoredSidebarWidth());
 
   // Re-clamp (never persist) if the browser window is resized narrower —
@@ -81,6 +102,19 @@ export default function App() {
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
+
+  // Clears saved sidebar width / photo zoom / photo view mode and resets
+  // each back to its fresh-user default — surfaced as a small "Reset layout
+  // preferences" action in Settings. Does not touch Dropbox auth, rename
+  // settings, locations/tags, or logs — layout-only, as the name implies.
+  const resetLayoutPreferences = () => {
+    clearStoredSidebarWidth();
+    clearStoredPhotoGridColumns();
+    clearStoredPhotoViewMode();
+    setSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
+    setColumns(DEFAULT_PHOTO_GRID_COLUMNS);
+    setPhotoViewMode(DEFAULT_PHOTO_VIEW_MODE);
+  };
 
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [locations, setLocations] = useState<LabelItem[]>([]);
@@ -915,7 +949,7 @@ export default function App() {
           columns={columns}
           onColumnsChange={handleColumnsChange}
           viewMode={photoViewMode}
-          onViewModeChange={setPhotoViewMode}
+          onViewModeChange={handlePhotoViewModeChange}
           onGoToSettings={() => setView("settings")}
           onRetry={() => loadDropboxFolder(dropboxPath)}
           onGoToRoot={() => loadDropboxFolder("")}
@@ -929,6 +963,7 @@ export default function App() {
           currentDropboxPath={dropboxPath}
           onSettingsSaved={handleSettingsSaved}
           onLabelsChanged={reloadLabels}
+          onResetLayoutPreferences={resetLayoutPreferences}
         />
       )}
       {view === "logs" && (

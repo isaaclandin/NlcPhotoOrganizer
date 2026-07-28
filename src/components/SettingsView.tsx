@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Info, Plus, Cloud, CloudOff, AlertTriangle, Loader2, Leaf, FolderCog } from "lucide-react";
+import { Info, Plus, Cloud, CloudOff, AlertTriangle, Loader2, Leaf, FolderCog, LayoutPanelLeft, RotateCcw } from "lucide-react";
 import Card from "./Card";
 import Button from "./Button";
 import SortableSettingsList from "./SortableSettingsList";
@@ -33,6 +33,8 @@ interface SettingsViewProps {
   currentDropboxPath: string;
   onSettingsSaved: (patch: Partial<AppSettings>) => void;
   onLabelsChanged: () => void;
+  /** Clears saved sidebar width / photo zoom / photo view mode and resets each to its default. */
+  onResetLayoutPreferences: () => void;
 }
 
 export default function SettingsView({
@@ -42,6 +44,7 @@ export default function SettingsView({
   currentDropboxPath,
   onSettingsSaved,
   onLabelsChanged,
+  onResetLayoutPreferences,
 }: SettingsViewProps) {
   const [prefix, setPrefix] = useState(settings.basePrefix);
   const [numberWidth, setNumberWidth] = useState(settings.numberWidth);
@@ -399,6 +402,27 @@ export default function SettingsView({
                 disabled={settings.defaultStartupDropboxPath === null}
               >
                 Clear Default
+              </Button>
+            </div>
+          </Card>
+
+          <Card>
+            <div className="flex items-center gap-1.5">
+              <LayoutPanelLeft size={14} className="text-sage-500" />
+              <h2 className="text-sm font-semibold text-ink-900">Layout Preferences</h2>
+              <Info size={13} className="text-ink-400" />
+            </div>
+            <p className="mt-1 text-xs text-ink-500">
+              Folder sidebar width, photo zoom, and grid/list view are remembered on this device.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                icon={<RotateCcw size={14} />}
+                className="!px-3.5 !py-2 text-xs"
+                onClick={onResetLayoutPreferences}
+              >
+                Reset Layout Preferences
               </Button>
             </div>
           </Card>
